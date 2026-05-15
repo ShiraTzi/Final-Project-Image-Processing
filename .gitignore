@@ -1,0 +1,18 @@
+# Ignore dataset files and large archives
+Image Data/
+*.zip
+
+# macOS artifacts
+.DS_Store
+__MACOSX/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual envs
+venv/
+env/
+
+# VSCode
+.vscode/
