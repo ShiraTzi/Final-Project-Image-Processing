@@ -13,6 +13,19 @@ __pycache__/
 # Virtual envs
 venv/
 env/
+.venv/
+
+# Project outputs / data (regenerated, not tracked)
+data/coco/
+data/distorted/
+data/enhanced/
+results/preds/
+results/figures/
+models/*.pth
+models/*.pt
+yolo_work/
+runs/
+yolo*.pt
 
 # VSCode
 .vscode/

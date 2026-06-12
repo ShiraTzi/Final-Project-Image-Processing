@@ -1,0 +1,76 @@
+# COCO Robustness Benchmark — central configuration.
+# All scripts read paths/params from here so clean/distorted/enhanced/finetuned
+# variants stay directly comparable.
+
+seed: 7
+
+paths:
+  data_root: data
+  coco_root: data/coco                # images + annotations live here
+  splits_dir: data/splits
+  distorted_root: data/distorted      # data/distorted/{type}/sev{n}/
+  enhanced_root: data/enhanced        # data/enhanced/{type}/sev{n}/
+  results_root: results
+  preds_dir: results/preds
+  metrics_dir: results/metrics
+  figures_dir: results/figures
+  models_dir: models
+
+dataset:
+  val_split: val2017
+  train_split: train2017
+  ann_instances_val: data/coco/annotations/instances_val2017.json
+  ann_keypoints_val: data/coco/annotations/person_keypoints_val2017.json
+  ann_instances_train: data/coco/annotations/instances_train2017.json
+  val_subset_size: 500                # fixed seeded subset of val2017
+  train_subset_size: 1500             # train2017 subset for fine-tuning (real GT)
+  val_subset_file: data/splits/val_subset.json
+  train_subset_file: data/splits/train_subset.json
+
+# Tasks to run. ORB = low-level feature/corner detection (cv2);
+# detection / keypoints = torchvision COCO-pretrained models.
+tasks:
+  - orb
+  - detection      # fasterrcnn_resnet50_fpn
+  - keypoints      # keypointrcnn_resnet50_fpn
+
+# Distortions adopted from the reference pipeline (matched enhancement funcs exist).
+# Three severities each: low / med / high.
+distortions:
+  gauss_noise:
+    severities:
+      low:  {var_limit: [100.0, 300.0]}
+      med:  {var_limit: [500.0, 1000.0]}
+      high: {var_limit: [1500.0, 2500.0]}
+  severe_jpeg:
+    severities:
+      low:  {quality_lower: 30, quality_upper: 40}
+      med:  {quality_lower: 10, quality_upper: 20}
+      high: {quality_lower: 1,  quality_upper: 5}
+  low_light:
+    severities:
+      low:  {brightness_limit: [-0.4, -0.4]}
+      med:  {brightness_limit: [-0.6, -0.6]}
+      high: {brightness_limit: [-0.8, -0.8]}
+
+inference:
+  device: cuda                        # falls back to cpu if unavailable
+  score_threshold: 0.05               # keep low for COCOeval (it sweeps thresholds); = YOLO conf
+  orb_nfeatures: 800
+  orb_match_distance_threshold: 64    # Hamming distance for a "good" ORB match
+
+# Object detection = YOLOv8 (ultralytics). yolov8n = nano (matches the reference);
+# bump to yolov8s/m for higher accuracy if GPU time allows.
+yolo:
+  weights: yolov8n.pt
+  imgsz: 640
+
+finetune:
+  # fine-tune YOLOv8 on distorted train2017 with real COCO GT (converted to YOLO labels)
+  epochs: 20
+  batch_size: 16
+  imgsz: 640
+  workdir: yolo_work                  # YOLO dataset (images/ + labels/ + data.yaml)
+  distortion: gauss_noise             # which distortion/severity of train2017 to fine-tune on
+  severity: high
+  checkpoint: models/yolov8_finetuned.pt

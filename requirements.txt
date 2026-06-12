@@ -1,0 +1,23 @@
+# Core DL / vision
+torch
+torchvision
+ultralytics          # YOLOv8 object detection + fine-tuning
+opencv-python
+opencv-contrib-python
+
+# Numerics / IO
+numpy
+scipy
+scikit-image
+pandas
+pyyaml
+tqdm
+requests
+
+# Distortions + COCO eval
+albumentations
+pycocotools
+
+# Plotting + tables
+matplotlib
+tabulate
