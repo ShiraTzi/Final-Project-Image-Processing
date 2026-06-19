@@ -1,4 +1,4 @@
-"""Model loaders + ORB helpers.
+"""Model loaders.
 
 Object detection uses YOLOv8 (ultralytics), COCO-pretrained.  YOLO predicts
 contiguous 0-79 class indices, so COCO80_TO_91 maps them to real COCO category
@@ -7,15 +7,12 @@ training labels from COCO GT).
 
 Keypoint detection uses torchvision's Keypoint R-CNN (person, 17 keypoints).
 
-ORB feature matching is taken from the reference pipeline (§2.3): the metric is
-``good_matches / clean_keypoints`` between the clean image and a variant.
+Panoptic segmentation (Panoptic FPN, detectron2) lives in src/segmentation.py
+and runs in a dedicated venv.
 """
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
-
-import cv2
-import numpy as np
 
 
 # COCO "80-class" (YOLO/contiguous) index -> COCO "91-class" category id.
@@ -67,27 +64,3 @@ def get_keypoint_model(device: str):
     weights = KeypointRCNN_ResNet50_FPN_Weights.COCO_V1
     model = keypointrcnn_resnet50_fpn(weights=weights).eval().to(device)
     return model, weights.transforms(), weights.meta["categories"]
-
-
-# --------------------------------------------------------------------------- #
-# ORB (low-level feature / corner detection)
-# --------------------------------------------------------------------------- #
-def orb_keypoints_and_descriptors(img_rgb: np.ndarray, nfeatures: int = 800):
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-    orb = cv2.ORB_create(nfeatures=nfeatures)
-    kps, desc = orb.detectAndCompute(gray, None)
-    return kps, desc
-
-
-def orb_match_ratio(clean_rgb: np.ndarray, variant_rgb: np.ndarray,
-                    nfeatures: int = 800, distance_threshold: int = 64) -> float:
-    """good_matches / clean_keypoints between clean and a distorted/enhanced image.
-    Reference §2.3.  Clean-vs-clean ≈ 1.0 by construction."""
-    kps1, desc1 = orb_keypoints_and_descriptors(clean_rgb, nfeatures)
-    kps2, desc2 = orb_keypoints_and_descriptors(variant_rgb, nfeatures)
-    if desc1 is None or desc2 is None or len(kps1) == 0:
-        return 0.0
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = matcher.match(desc1, desc2)
-    good = [m for m in matches if m.distance <= distance_threshold]
-    return len(good) / len(kps1)

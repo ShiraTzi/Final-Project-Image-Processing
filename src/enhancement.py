@@ -1,9 +1,8 @@
 """Classical enhancement / restoration, one matched method per distortion.
 
-Lifted from the reference pipeline (§3.1):
-  - gauss_noise -> Non-Local Means + bilateral
-  - severe_jpeg -> Y-channel bilateral filtering
-  - low_light   -> gamma correction + CLAHE
+  - gauss_noise  -> Non-Local Means + bilateral   (edge-preserving denoise)
+  - salt_pepper  -> median filter                 (the classic impulse-noise remover)
+  - motion_blur  -> unsharp masking               (sharpening as a simple deblur proxy)
 
 All functions take and return an RGB uint8 array.
 
@@ -28,37 +27,30 @@ from src.data import load_subset_ids
 def restore_noise(img_rgb: np.ndarray) -> np.ndarray:
     """Gaussian-noise restoration: strong NLM denoise + edge-preserving bilateral."""
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    den = cv2.fastNlMeansDenoisingColored(bgr, None, 25, 25, 7, 35)
-    den = cv2.bilateralFilter(den, d=9, sigmaColor=80, sigmaSpace=80)
+    den = cv2.fastNlMeansDenoisingColored(bgr, None, 10, 10, 7, 21)
+    den = cv2.bilateralFilter(den, d=7, sigmaColor=50, sigmaSpace=50)
     return cv2.cvtColor(den, cv2.COLOR_BGR2RGB)
 
 
-def restore_jpeg(img_rgb: np.ndarray) -> np.ndarray:
-    """Severe-JPEG restoration: bilateral on the Y (luma) channel only."""
-    ycrcb = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2YCrCb)
-    y, cr, cb = cv2.split(ycrcb)
-    y = cv2.bilateralFilter(y, d=7, sigmaColor=40, sigmaSpace=40)
-    return cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2RGB)
+def restore_saltpepper(img_rgb: np.ndarray) -> np.ndarray:
+    """Salt-and-pepper restoration: median filter (removes impulse pixels)."""
+    return cv2.medianBlur(img_rgb, 3)
 
 
-def restore_lowlight(img_rgb: np.ndarray) -> np.ndarray:
-    """Low-light restoration: gamma lift + CLAHE local contrast on L channel."""
-    gamma = 0.35
-    lut = (np.arange(256) / 255.0) ** gamma * 255
-    lut = np.clip(lut, 0, 255).astype(np.uint8)
-    img_gamma = cv2.LUT(img_rgb, lut)
+def restore_motionblur(img_rgb: np.ndarray) -> np.ndarray:
+    """Motion-blur restoration: unsharp masking (sharpen high frequencies).
 
-    lab = cv2.cvtColor(img_gamma, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
-    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
+    A practical, blind deblurring proxy — we don't know the exact blur kernel at
+    inference time, so we boost detail rather than deconvolve."""
+    blurred = cv2.GaussianBlur(img_rgb, (0, 0), sigmaX=3.0)
+    sharp = cv2.addWeighted(img_rgb, 1.5, blurred, -0.5, 0)
+    return np.clip(sharp, 0, 255).astype(np.uint8)
 
 
 RESTORERS: Dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "gauss_noise": restore_noise,
-    "severe_jpeg": restore_jpeg,
-    "low_light": restore_lowlight,
+    "salt_pepper": restore_saltpepper,
+    "motion_blur": restore_motionblur,
 }
 
 

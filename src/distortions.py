@@ -1,13 +1,13 @@
-"""Image distortions + SNR, mirroring the reference pipeline's three corruptions.
+"""Image distortions + SNR — the three corruptions chosen in the main README.
 
-The reference used albumentations (`GaussNoise`, `ImageCompression`,
-`RandomBrightnessContrast`).  Albumentations' GaussNoise signature changed
-across releases (``var_limit`` was removed in 2.0), which would make a
-reproducible benchmark fragile, so we implement the same three operations
-directly with numpy/cv2.  Behaviour is equivalent and fully deterministic
-per (image_id, distortion, severity).
+  1. Gaussian noise     (sensor / random intensity noise)
+  2. Salt-and-pepper     (sparse impulsive pixel corruption)
+  3. Motion blur         (camera shake / object motion)
 
-compute_snr() is taken verbatim from the reference (§2.5).
+Implemented directly with numpy/cv2 so the benchmark is deterministic per
+(image_id, distortion, severity) and independent of any augmentation library's
+version. compute_snr() quantifies distortion intensity (used for acc-vs-SNR
+curves).
 
 Usage:
     python -m src.distortions --config configs/config.yaml      # build all distorted sets
@@ -27,15 +27,14 @@ from tqdm import tqdm
 from src.config import load_config, ensure_dirs
 from src.data import load_subset_ids
 
-DISTORTIONS = ("gauss_noise", "severe_jpeg", "low_light")
+DISTORTIONS = ("gauss_noise", "salt_pepper", "motion_blur")
 
 
 # --------------------------------------------------------------------------- #
 # Core operations (deterministic given an explicit RNG)
 # --------------------------------------------------------------------------- #
 def gauss_noise(img_rgb: np.ndarray, var_limit, rng: np.random.Generator) -> np.ndarray:
-    """Additive Gaussian noise; variance sampled uniformly in ``var_limit``
-    (matches albumentations.GaussNoise on a 0-255 image)."""
+    """Additive Gaussian noise; variance sampled uniformly in ``var_limit`` (0-255 image)."""
     var = rng.uniform(float(var_limit[0]), float(var_limit[1]))
     sigma = float(np.sqrt(var))
     noise = rng.normal(0.0, sigma, img_rgb.shape)
@@ -43,28 +42,38 @@ def gauss_noise(img_rgb: np.ndarray, var_limit, rng: np.random.Generator) -> np.
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def severe_jpeg(img_rgb: np.ndarray, quality_lower: int, quality_upper: int,
-                rng: np.random.Generator) -> np.ndarray:
-    """Re-encode as JPEG at a low quality (matches albumentations.ImageCompression)."""
-    q = int(rng.integers(quality_lower, quality_upper + 1))
-    bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    ok, enc = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), q])
-    if not ok:
+def salt_pepper(img_rgb: np.ndarray, amount: float, rng: np.random.Generator) -> np.ndarray:
+    """Set a fraction ``amount`` of pixels to pure white (salt) or black (pepper),
+    split 50/50.  Affects all channels of the chosen pixels."""
+    out = img_rgb.copy()
+    h, w = out.shape[:2]
+    n = int(amount * h * w)
+    if n <= 0:
+        return out
+    ys = rng.integers(0, h, size=n)
+    xs = rng.integers(0, w, size=n)
+    half = n // 2
+    out[ys[:half], xs[:half]] = 255          # salt
+    out[ys[half:], xs[half:]] = 0            # pepper
+    return out
+
+
+def motion_blur(img_rgb: np.ndarray, ksize: int, rng: np.random.Generator) -> np.ndarray:
+    """Linear motion blur with a length-``ksize`` kernel at a random angle."""
+    ksize = int(ksize)
+    if ksize < 3:
         return img_rgb
-    dec = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-    return cv2.cvtColor(dec, cv2.COLOR_BGR2RGB)
+    kernel = np.zeros((ksize, ksize), dtype=np.float32)
+    kernel[(ksize - 1) // 2, :] = 1.0
+    angle = float(rng.uniform(0, 180))
+    rot = cv2.getRotationMatrix2D((ksize / 2 - 0.5, ksize / 2 - 0.5), angle, 1.0)
+    kernel = cv2.warpAffine(kernel, rot, (ksize, ksize))
+    s = kernel.sum()
+    kernel = kernel / s if s > 0 else kernel
+    return cv2.filter2D(img_rgb, -1, kernel)
 
 
-def low_light(img_rgb: np.ndarray, brightness_limit, rng: np.random.Generator) -> np.ndarray:
-    """Darken via additive brightness on max value (albumentations
-    RandomBrightnessContrast default brightness_by_max=True, contrast=0):
-    out = img + beta * 255."""
-    beta = rng.uniform(float(brightness_limit[0]), float(brightness_limit[1]))
-    out = img_rgb.astype(np.float32) + beta * 255.0
-    return np.clip(out, 0, 255).astype(np.uint8)
-
-
-_FUNCS = {"gauss_noise": gauss_noise, "severe_jpeg": severe_jpeg, "low_light": low_light}
+_FUNCS = {"gauss_noise": gauss_noise, "salt_pepper": salt_pepper, "motion_blur": motion_blur}
 
 
 def apply_distortion(img_rgb: np.ndarray, dtype: str, params: Dict,
@@ -80,8 +89,7 @@ def _rng_for(seed: int, image_id: int, dtype: str, severity: str) -> np.random.G
 
 
 def compute_snr(clean_rgb: np.ndarray, dist_rgb: np.ndarray) -> float:
-    """SNR (dB) = 10*log10(signal_power / noise_power), noise = clean - distorted.
-    Verbatim from reference §2.5."""
+    """SNR (dB) = 10*log10(signal_power / noise_power), noise = clean - distorted."""
     clean = clean_rgb.astype(np.float64)
     noise = clean - dist_rgb.astype(np.float64)
     signal_power = float(np.mean(clean ** 2))
@@ -110,11 +118,10 @@ def build_distorted_sets(cfg: Dict) -> None:
             out_dir.mkdir(parents=True, exist_ok=True)
             for image_id in tqdm(img_ids, desc=f"{dtype}/{severity}", leave=False):
                 fname = id2name[image_id]
-                src = clean_dir / fname
-                dst = out_dir / fname
-                clean = np.array(Image.open(src).convert("RGB"))
+                clean = np.array(Image.open(clean_dir / fname).convert("RGB"))
                 rng = _rng_for(seed, image_id, dtype, severity)
                 dist = apply_distortion(clean, dtype, params, rng)
+                dst = out_dir / fname
                 if not dst.exists():
                     Image.fromarray(dist).save(dst)
                 snr_rows.append({

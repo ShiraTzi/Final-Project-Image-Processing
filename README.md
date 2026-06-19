@@ -4,206 +4,234 @@ Robustness benchmark for image-processing / vision methods under image
 distortion, on the **COCO** dataset. For each task we measure a **clean
 baseline**, the **degradation** under three corruptions at multiple severities,
 and the **recovery** from two improvement strategies (classical **enhancement**
-and model **fine-tuning**), reported per class and as a function of **SNR**.
+and model **fine-tuning**), reported per class / category and as a function of
+**SNR**.
 
 ---
 
-## 1. Dataset
-We use the COCO **val2017** split as the benchmark, with a **fixed, seeded
-subset of 500 images** (the single source of truth: every variant —
-clean / distorted / enhanced / fine-tuned — runs on exactly these image-ids,
-so all results share identical ground truth). A separate seeded **1500-image
-train2017 subset** is used only for fine-tuning. Only the subset images are
-downloaded (via each image's `coco_url`), so no multi-GB zips are needed.
+## Course-project pipeline (phases)
 
-## 2. Tasks and Models
-Three tasks spanning low-level and high-level vision, each with a representative
-model/algorithm:
+The project follows the course's required workflow. Each phase has a single
+runnable entry point (see [How to run each phase](#how-to-run-each-phase)).
+
+| Phase | What it does | Entry point |
+|---|---|---|
+| **0 — Setup & Data** | build the two virtualenvs; download COCO annotations + subset images (+ panoptic GT) | `src.data` |
+| **1 — Clean baseline** | run all models on clean images, compute baseline metrics | `--only infer eval` (clean) |
+| **2 — Distortion** | generate distorted images (3 corruptions × 3 severities) + SNR; measure degradation | `src.distortions` → infer → eval |
+| **3 — Enhancement** | restore distorted images (matched denoise/deblur); measure recovery | `src.enhancement` → infer → eval |
+| **4 — Fine-tuning** | fine-tune YOLOv8 on distorted data (real GT); re-evaluate | `src.finetune_det` |
+| **5 — Report** | comparison tables, per-class plots, accuracy-vs-SNR curves | `src.tables`, `src.visualize` |
+
+```
+data ──► distort ──► enhance ──┐
+  │          │          │       ├─► infer ─► eval ─► tables/figures
+  └──────────┴──────────┴───────┘            ▲
+                          finetune (YOLOv8) ──┘
+```
+
+## Tasks and models
+Three tasks spanning low-level and high-level vision (the main-branch task set):
 
 | Task | Model / algorithm | Stack | Metric |
 |---|---|---|---|
-| Feature / corner detection (low-level) | **ORB** | OpenCV (classical) | match ratio vs clean |
-| Object detection (high-level) | **YOLOv8n** (COCO-pretrained) | ultralytics | COCOeval bbox mAP |
-| Keypoint detection (high-level) | **Keypoint R-CNN** ResNet50-FPN (COCO-pretrained) | torchvision | COCOeval keypoints (OKS) |
+| Object detection | **YOLOv8n** (COCO-pretrained) | ultralytics | COCOeval bbox mAP |
+| Keypoint detection | **Keypoint R-CNN** ResNet50-FPN (COCO-pretrained) | torchvision | COCOeval keypoints (OKS) |
+| Panoptic segmentation | **Panoptic FPN** R50 (COCO-pretrained) | detectron2 | Panoptic Quality (PQ/SQ/RQ) |
 
-> Panoptic/instance segmentation is **out of scope** for this implementation
-> (kept to three tasks); it can be added later as a 4th task (e.g. Mask R-CNN)
-> without changing the pipeline structure.
+> Object detection is fine-tuned (Phase 4) as the deep-learning improvement.
+> Panoptic FPN runs in a **separate virtualenv** (detectron2 needs a different
+> torch) — the pipeline calls it as a subprocess; everything else is automatic.
 
-## 3. Distortions
-Three corruption types, each at **3 severities** (low / med / high), applied to
-the fixed subset. They are implemented directly in numpy/cv2 (equivalent to the
-common albumentations ops) so the benchmark is deterministic and
-version-independent:
+## Distortions
+Three corruptions (main-branch choice), each at **3 severities** (low/med/high),
+applied to the fixed subset; deterministic per image (numpy/cv2). SNR (dB) is
+recorded per image in `results/metrics/snr_index.csv`.
 
-1. **Gaussian noise** — sensor / random intensity noise.
-2. **Severe JPEG compression** — heavy block/ringing artifacts from low-quality encoding.
-3. **Low light** — strong global darkening.
+| Distortion | Models | Matched enhancement (Phase 3) |
+|---|---|---|
+| **Gaussian noise** | sensor / intensity noise | Non-Local Means + bilateral |
+| **Salt-and-pepper** | impulsive pixel corruption | median filter |
+| **Motion blur** | camera shake / object motion | unsharp masking (deblur proxy) |
 
-For every distorted image we record the **SNR (dB)** in `results/metrics/snr_index.csv`.
+## Dataset
+COCO **val2017**, a **fixed seeded subset of 500 images** (single source of
+truth: every variant runs on exactly these image-ids, sharing identical ground
+truth). A seeded **1500-image train2017 subset** is used only for fine-tuning.
+Only subset images are downloaded (via each image's `coco_url`); panoptic PQ
+additionally needs the COCO panoptic GT (~821MB, fetched automatically when the
+segmentation task is enabled).
 
-> The matched enhancement methods (Part 5) are tied to these three distortions.
-> Salt-and-pepper and motion blur are easy optional extras — add them under
-> `distortions:` in the config and provide a matching restorer.
+---
 
-## 4. Benchmarking Workflow
-For each (task, variant):
-1. **Baseline** — measure on clean images.
-2. **Distortion** — apply each corruption at each severity, measure degradation.
-3. **Compare** — `pycocotools` COCOeval for the high-level tasks (mAP, mAP@.50,
-   mAP@.75, per-class AP, small/med/large), ORB match ratio for the low-level task.
+## Environments
+Two virtualenvs are required because detectron2 needs an older torch than the
+main stack:
 
-Per-severity SNR is recorded, producing **accuracy-vs-SNR curves** in addition
-to per-class results.
+```bash
+# (1) main env — detection (YOLOv8), keypoints (torchvision), distortions, eval, plots
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip wheel
+pip install -r requirements.txt
+deactivate
 
-## 5. Improvement Strategies
-Two approaches (the assignment asks for both):
-1. **Enhancement (pre-processing)** — one matched restorer per distortion:
-   Non-Local Means + bilateral (gaussian), Y-channel bilateral (severe JPEG),
-   gamma + CLAHE (low light). Enhanced images flow through the same
-   inference→eval path to measure recovery.
-2. **Fine-tuning** — **YOLOv8** is fine-tuned on the *distorted* train2017
-   subset using **real COCO ground truth** (converted to YOLO labels), then
-   evaluated on the *distorted val* subset (held out — no leakage). See
-   [How fine-tuning works](#how-fine-tuning-works).
+# (2) detectron2 env — panoptic segmentation only
+python3 -m venv .venv-det
+source .venv-det/bin/activate
+pip install -U pip wheel
+pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu118
+pip install "numpy<2" pyyaml tqdm pillow opencv-python pycocotools ninja
+pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
+pip install 'git+https://github.com/cocodataset/panopticapi.git'
+deactivate
+```
+Sanity checks (run on a **GPU node** for the `cuda` checks):
+```bash
+.venv/bin/python      -c "import torch,torchvision,cv2,ultralytics,pycocotools; print(torch.cuda.is_available())"
+.venv-det/bin/python  -c "import torch,detectron2; from panopticapi.evaluation import pq_compute; print(torch.cuda.is_available())"
+```
+> The committed `venv.zip` is a Windows env and is **not** used on Linux.
+> The detectron2 env builds from source; for GPU support build it on a node that
+> has the CUDA toolkit (`nvcc`).
 
-## 6. Evaluation and Robustness Analysis
-- **High-level tasks:** COCO metrics (mAP, mAP@.50, mAP@.75) + absolute
-  degradation, per-class sensitivity, and small-vs-large object effects.
-- **Low-level task:** ORB match ratio vs SNR.
-- Outputs: per-class AP bars, accuracy-vs-SNR curves, and a wide
-  clean / distorted / enhanced / fine-tuned comparison table with
-  degradation and recovery deltas.
+---
+
+## How to run each phase
+
+The orchestrator `scripts/run_pipeline.py` is **resumable** (skips work whose
+output already exists; add `--force` to recompute). Phases map to stages:
+`data, distort, enhance, infer, eval, finetune, report`.
+
+### Everything at once
+```bash
+python scripts/run_pipeline.py                      # phases 0–5
+sbatch slurm/pipeline.sbatch                         # same, on a GPU node
+```
+
+### Phase 0 — Setup & Data
+```bash
+python -m src.data                                   # annotations + subset images (+ panoptic GT)
+# (env setup as above)
+```
+
+### Phase 1 — Clean baseline
+```bash
+python scripts/run_pipeline.py --only infer eval     # runs clean first (+ all variants)
+# or just the clean models manually:
+python -m src.inference --task detection --variant clean
+python -m src.inference --task keypoints --variant clean
+python -m src.metrics   --task segmentation --variant clean   # detectron2 subprocess
+python -m src.metrics   --task detection    --variant clean
+python -m src.metrics   --task keypoints    --variant clean
+```
+
+### Phase 2 — Distortion
+```bash
+python -m src.distortions                            # writes data/distorted/** + snr_index.csv
+python -m src.inference --task detection --variant distorted --dtype motion_blur --severity high
+python -m src.metrics   --task detection --variant distorted --dtype motion_blur --severity high
+```
+
+### Phase 3 — Enhancement
+```bash
+python -m src.enhancement                            # writes data/enhanced/**
+python -m src.inference --task detection --variant enhanced --dtype gauss_noise --severity high
+python -m src.metrics   --task detection --variant enhanced --dtype gauss_noise --severity high
+```
+
+### Phase 4 — Fine-tuning (YOLOv8)
+```bash
+python -m src.finetune_det --mode both               # train on distorted train2017 + evaluate
+sbatch slurm/finetune.sbatch                          # on a GPU node
+```
+
+### Phase 5 — Report
+```bash
+python -m src.tables                                 # comparison.csv / comparison.md / summary_long.csv
+python -m src.visualize                              # acc-vs-SNR curves, per-class AP bars, image grids
+python scripts/run_pipeline.py --only report
+```
 
 ---
 
 ## Repository structure
 ```
 configs/config.yaml        # single source of truth: paths, seed, subset sizes,
-                           #   distortions×severities, tasks, yolo + finetune params
-requirements.txt
+                           #   distortions×severities, tasks, yolo/finetune/segmentation params
+requirements.txt           # main venv deps
 src/
   config.py                # config loader + variant/path helpers
-  data.py                  # download annotations + subset images; seeded splits
-  distortions.py           # gaussian / severe-JPEG / low-light + compute_snr
-  enhancement.py           # restore_noise / restore_jpeg / restore_lowlight
-  models.py                # YOLOv8 loader (+COCO80<->91 map), Keypoint R-CNN, ORB helpers
-  inference.py             # (task, variant) -> COCO-format prediction JSON
-  metrics.py               # COCOeval (bbox/keypoints) + ORB match ratio
+  data.py                  # download annotations (+panoptic) + subset images; seeded splits
+  distortions.py           # gaussian / salt-pepper / motion-blur + compute_snr
+  enhancement.py           # NLM+bilateral / median / unsharp restorers
+  models.py                # YOLOv8 loader (+COCO80<->91 map), Keypoint R-CNN loader
+  inference.py             # detection (YOLO) + keypoints -> COCO prediction JSON
+  segmentation.py          # Panoptic FPN inference + PQ  (runs under .venv-det)
+  metrics.py               # COCOeval (bbox/keypoints); shells out for segmentation PQ
   tables.py                # comparison / degradation / recovery tables
   visualize.py             # acc-vs-SNR curves, per-class AP bars, image grids
   finetune_det.py          # fine-tune YOLOv8 on distorted train2017 (real GT)
-scripts/run_pipeline.py    # resumable orchestrator over all stages
+scripts/run_pipeline.py    # resumable orchestrator over all phases
 slurm/                     # pipeline / inference / finetune sbatch jobs
 results/{preds,metrics,figures}/   # generated outputs
 data/                      # coco/ images+annotations, distorted/, enhanced/ (gitignored)
 ```
 
-## Environment setup
-GPU is required for the detector inference and fine-tuning (run those on a GPU
-node / via SLURM). CPU is fine for distortion, enhancement, and ORB.
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip wheel
-pip install -r requirements.txt
-
-# sanity check (prints True on a GPU node)
-python -c "import torch,torchvision,cv2,ultralytics,pycocotools; print(torch.cuda.is_available())"
-```
-> Note: the committed `venv.zip` is a Windows environment and is **not** used on
-> Linux — always build a fresh `.venv` as above.
-
-## How to run
-
-### One command (resumable)
-```bash
-python scripts/run_pipeline.py            # data -> distort -> enhance -> infer -> eval -> finetune -> report
-python scripts/run_pipeline.py --skip-finetune
-python scripts/run_pipeline.py --only report      # rebuild tables/figures only
-python scripts/run_pipeline.py --force            # recompute even if outputs exist
-```
-Every stage **skips work whose output already exists**, so it is safe to re-run
-and resume after interruption.
-
-### On the cluster (SLURM)
-```bash
-sbatch slurm/pipeline.sbatch              # full pipeline on one GPU
-sbatch slurm/inference.sbatch             # infer + eval + report only
-sbatch slurm/finetune.sbatch              # fine-tune YOLOv8 + evaluate
-```
-
-### Stage by stage (manual)
-```bash
-python -m src.data                                   # download + build subsets
-python -m src.distortions                            # distorted sets + snr_index.csv
-python -m src.enhancement                            # enhanced sets
-python -m src.inference --task detection --variant clean
-python -m src.inference --task keypoints --variant distorted --dtype gauss_noise --severity high
-python -m src.metrics   --task orb       --variant distorted --dtype low_light  --severity high
-python -m src.finetune_det --mode both               # train + evaluate fine-tuned YOLO
-python -m src.tables
-python -m src.visualize
-```
-
 ## Configuration
 All knobs live in [configs/config.yaml](configs/config.yaml):
 - `dataset.val_subset_size` / `train_subset_size`, `seed`
-- `distortions:` — the three corruptions and their 3 severities
-- `tasks:` — `[orb, detection, keypoints]`
-- `yolo.weights` — `yolov8n.pt` (bump to `yolov8s/m.pt` for more accuracy)
-- `finetune:` — `epochs`, `batch_size`, `imgsz`, and which `distortion`/`severity`
-  to fine-tune on
+- `distortions:` — the three corruptions × 3 severities
+- `tasks:` — `[detection, keypoints, segmentation]`
+- `yolo.weights` — `yolov8n.pt` (bump to `yolov8s/m.pt` for accuracy)
+- `finetune:` — epochs / batch / imgsz / which distortion to fine-tune on
+- `segmentation:` — detectron2 venv python path + Panoptic FPN config
 
 ## Outputs
-- `results/preds/{task}__{variant}.json` — COCO-format predictions
+- `results/preds/{task}__{variant}.json` — predictions (segmentation also writes PNG masks)
 - `results/metrics/{task}__{variant}.json` — per-(task,variant) metrics
 - `results/metrics/snr_index.csv` — per-image SNR for every distortion/severity
 - `results/metrics/summary_long.csv`, `comparison.csv`, `comparison.md` — aggregated tables
 - `results/figures/*.png` — acc-vs-SNR curves, per-class AP bars, image grids
 
+## Metrics
+- **Detection** (YOLOv8): COCOeval **bbox mAP**, mAP@.50, mAP@.75, per-class AP, small/med/large.
+- **Keypoints** (Keypoint R-CNN): COCOeval **keypoints** (OKS) AP.
+- **Segmentation** (Panoptic FPN): **PQ / SQ / RQ** via panopticapi (things & stuff).
+- Tables report **degradation** (distorted − clean) and **recovery** (enhanced/fine-tuned − distorted).
+
 ## How fine-tuning works
-`src/finetune_det.py` (1) distorts the train2017 subset on the fly and writes
-the **real** COCO boxes as YOLO labels, then (2) continues training the
-**pretrained** `yolov8n.pt` on that data (`model.train(...)`) — same
-architecture, updated weights (transfer learning, not from scratch). The result
-is saved as a **separate** checkpoint `models/yolov8_finetuned.pt`, leaving the
-clean baseline model untouched. It is then evaluated on the *distorted val*
-subset via COCOeval. Because yolov8n is tiny and starts pretrained, this is
-light — roughly a few-to-15 minutes on one GPU. Tune cost via `finetune.epochs`,
-`imgsz`, and `dataset.train_subset_size`.
+`src/finetune_det.py` distorts the train2017 subset on the fly, writes the
+**real** COCO boxes as YOLO labels, and continues training the **pretrained**
+`yolov8n.pt` on that data (transfer learning — same architecture, updated
+weights). The result is saved separately as `models/yolov8_finetuned.pt`
+(the clean baseline model is untouched) and evaluated on the *distorted val*
+subset (held out — no leakage). yolov8n is tiny and starts pretrained, so this
+is light (~minutes on one GPU). Tune via `finetune.epochs`, `imgsz`,
+`dataset.train_subset_size`.
 
 ---
 
 ## Committing and pushing
-This repo is the submission, so keep it up to date. Generated data/outputs and
-environments are gitignored (`data/`, `results/preds`, `results/figures`,
-`.venv/`, `*.zip`, `*.pt`); commit code, config, and the report.
+Generated data/outputs and environments are gitignored (`data/`,
+`results/preds`, `results/figures`, `.venv/`, `.venv-det/`, `*.zip`, `*.pt`).
 
 ```bash
 git add -A
 git commit -m "your message"
 git push -u origin <branch>      # e.g. ohads/phase0
 ```
-
 If `git push` reports `could not read Username for 'https://github.com'`, the
-machine has no stored GitHub credentials. Authenticate with one of:
+machine has no stored credentials. Authenticate with one of:
 ```bash
-# (a) GitHub CLI
-gh auth login
-
-# (b) Personal access token (Contents: write) over HTTPS
-git push https://<TOKEN>@github.com/ShiraTzi/Final-Project-Image-Processing.git <branch>
-
-# (c) SSH — after adding an SSH key to your GitHub account
-git remote set-url origin git@github.com:ShiraTzi/Final-Project-Image-Processing.git
-git push -u origin <branch>
+gh auth login                                                # (a) GitHub CLI
+git push https://<TOKEN>@github.com/ShiraTzi/Final-Project-Image-Processing.git <branch>   # (b) PAT
+git remote set-url origin git@github.com:ShiraTzi/Final-Project-Image-Processing.git       # (c) SSH
 ```
 
 ## Deliverables
-- This README as the detailed report (choices, methods, results, instructions).
+- This README as the detailed report (choices, methods, metrics, run instructions).
 - Result tables (per class and per SNR) and figures under `results/`.
-- Code, config, SLURM scripts, and saved fine-tuned checkpoint.
+- Code, config, SLURM scripts, fine-tuned checkpoint.
 - Final presentation (PPT/PDF) summarizing the README.
 - Team registration (names, emails) and the GitHub repository URL.

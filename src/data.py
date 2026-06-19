@@ -26,6 +26,7 @@ from tqdm import tqdm
 from src.config import load_config, ensure_dirs
 
 ANN_ZIP_URL = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
+PANOPTIC_ZIP_URL = "http://images.cocodataset.org/annotations/panoptic_annotations_trainval2017.zip"
 
 
 def _download_file(url: str, dest: Path, chunk: int = 1 << 20) -> None:
@@ -61,6 +62,33 @@ def download_annotations(coco_root: Path) -> None:
     print("[data] extracting annotations ...")
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(coco_root)
+
+
+def download_panoptic_annotations(coco_root: Path) -> None:
+    """Download + extract panoptic GT (json + per-image PNG masks) for val2017.
+
+    The big zip (~821MB) contains panoptic_{train,val}2017.json plus *nested*
+    panoptic_{train,val}2017.zip archives of the PNG masks; we extract the val
+    PNGs out of the nested zip."""
+    ann_dir = coco_root / "annotations"
+    val_json = ann_dir / "panoptic_val2017.json"
+    val_png_dir = ann_dir / "panoptic_val2017"
+    if val_json.exists() and val_png_dir.is_dir() and any(val_png_dir.iterdir()):
+        print("[data] panoptic annotations already present")
+        return
+
+    zip_path = coco_root / "panoptic_annotations_trainval2017.zip"
+    if not zip_path.exists():
+        print("[data] downloading panoptic annotations zip (~821MB) ...")
+        _download_file(PANOPTIC_ZIP_URL, zip_path)
+    print("[data] extracting panoptic annotations ...")
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(coco_root)
+    nested = ann_dir / "panoptic_val2017.zip"
+    if nested.exists():
+        print("[data] extracting nested panoptic_val2017 PNG masks ...")
+        with zipfile.ZipFile(nested) as zf:
+            zf.extractall(ann_dir)
 
 
 def _select_image_ids(ann_path: str, n: int, seed: int,
@@ -116,6 +144,8 @@ def build_subsets(cfg: Dict) -> None:
     seed = cfg["seed"]
 
     download_annotations(coco_root)
+    if "segmentation" in cfg.get("tasks", []):
+        download_panoptic_annotations(coco_root)
 
     # --- val subset (single source of truth) ---
     val_ids = _select_image_ids(ds["ann_instances_val"], ds["val_subset_size"], seed)

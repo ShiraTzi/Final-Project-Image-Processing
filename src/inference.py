@@ -1,8 +1,8 @@
 """Run a (task, variant) and write COCO-format prediction JSON.
 
 Tasks handled here: ``detection`` (YOLOv8, bbox) and ``keypoints``
-(torchvision Keypoint R-CNN).  ORB is not a COCO-JSON task — its robustness
-metric is a clean-vs-variant match ratio computed in metrics.py.
+(torchvision Keypoint R-CNN).  Panoptic segmentation runs separately in
+src/segmentation.py (detectron2 venv).
 
 Predictions are written to results/preds/{task}__{variant_tag}.json so the
 single COCOeval path in metrics.py can consume them.
