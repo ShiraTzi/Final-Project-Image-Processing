@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, List
@@ -95,14 +96,48 @@ def evaluate_coco(cfg: Dict, task: str, variant: str, dtype=None, severity=None)
 def evaluate_segmentation(cfg: Dict, variant: str, dtype=None, severity=None) -> Dict:
     """Run src/segmentation.py under the detectron2 venv; it does inference + PQ
     and writes results/metrics/segmentation__{tag}.json, which we then read."""
-    py = cfg["segmentation"]["detectron2_python"]
+    py = os.environ.get("DETECTRON2_PYTHON", cfg["segmentation"]["detectron2_python"])
     if not Path(py).is_absolute():
         py = str(Path(cfg["_root"]) / py)
-    cmd = [py, "-m", "src.segmentation", "--variant", variant]
+
+    py_path = Path(py)
+    if not py_path.exists():
+        raise FileNotFoundError(
+            f"detectron2 interpreter not found: {py_path}. Set configs/config.yaml "
+            "segmentation.detectron2_python or the DETECTRON2_PYTHON environment variable."
+        )
+
+    probe = subprocess.run(
+        [str(py_path), "-c", "import detectron2"],
+        cwd=cfg["_root"],
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(
+            "detectron2 is not installed in the configured segmentation environment. "
+            f"Interpreter: {py_path}\n"
+            f"stderr: {probe.stderr.strip() or '(no stderr)'}\n"
+            "Install detectron2 in that environment or point segmentation.detectron2_python "
+            "at a working detectron2 venv."
+        )
+
+    cmd = [str(py_path), "-m", "src.segmentation", "--variant", variant]
     if dtype:
         cmd += ["--dtype", dtype, "--severity", severity]
     print(f"[metrics] segmentation -> subprocess: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, cwd=cfg["_root"])
+    try:
+        completed = subprocess.run(cmd, check=True, cwd=cfg["_root"], capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "segmentation subprocess failed.\n"
+            f"command: {' '.join(cmd)}\n"
+            f"stderr: {exc.stderr.strip() if exc.stderr else '(no stderr)'}"
+        ) from exc
+    if completed.stdout:
+        print(completed.stdout, end="")
+    if completed.stderr:
+        print(completed.stderr, end="", flush=True)
 
     tag = variant_tag(variant, dtype, severity)
     out_path = Path(cfg["paths"]["metrics_dir"]) / f"segmentation__{tag}.json"

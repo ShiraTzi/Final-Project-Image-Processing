@@ -71,7 +71,7 @@ yolo:
 # (.venv-det) with a detectron2-compatible torch; the main pipeline calls it as
 # a subprocess. PQ is computed with panopticapi against COCO panoptic GT.
 segmentation:
-  detectron2_python: .venv-det/bin/python
+  detectron2_python: /home/dsi/tzionys/HW3/.venv/bin/python
   config: COCO-PanopticSegmentation/panoptic_fpn_R_50_3x.yaml
   score_threshold: 0.5
 

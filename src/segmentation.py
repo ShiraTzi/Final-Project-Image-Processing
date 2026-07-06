@@ -71,10 +71,16 @@ def _prepare_subset_gt(cfg, img_ids):
 
 
 def run(cfg, variant, dtype=None, severity=None) -> dict:
-    import cv2
-    from detectron2.data import MetadataCatalog
-    from panopticapi.utils import id2rgb
-    from panopticapi.evaluation import pq_compute
+    try:
+        import cv2
+        from detectron2.data import MetadataCatalog
+        from panopticapi.utils import id2rgb
+        from panopticapi.evaluation import pq_compute
+    except ImportError as exc:
+        raise RuntimeError(
+            "segmentation requires detectron2 and panopticapi in the configured venv. "
+            "Install them in .venv-det or update configs/config.yaml segmentation.detectron2_python."
+        ) from exc
 
     ds = cfg["dataset"]
     img_ids = _subset_ids(ds["val_subset_file"])
