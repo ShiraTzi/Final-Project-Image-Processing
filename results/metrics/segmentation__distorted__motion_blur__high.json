@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "variant": "distorted__motion_blur__high",
+  "PQ": 0.1212,
+  "SQ": 0.5079,
+  "RQ": 0.157,
+  "PQ_things": 0.1275,
+  "PQ_stuff": 0.1117,
+  "n_images": 500
+}

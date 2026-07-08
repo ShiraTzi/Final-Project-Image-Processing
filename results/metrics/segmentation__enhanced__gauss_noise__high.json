@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "variant": "enhanced__gauss_noise__high",
+  "PQ": 0.1838,
+  "SQ": 0.5953,
+  "RQ": 0.2297,
+  "PQ_things": 0.2411,
+  "PQ_stuff": 0.0984,
+  "n_images": 500
+}
