@@ -89,6 +89,52 @@ def plot_acc_vs_snr(cfg: Dict) -> None:
         print(f"[viz] {out}")
 
 
+def plot_recovery_bars(cfg: Dict) -> None:
+    """The improvement trend at a glance: recovery (improved − distorted) per
+    distortion × severity cell, one panel per task. Positive bars = the
+    improvement strategy helped; negative = it made things worse."""
+    comp_path = Path(cfg["paths"]["metrics_dir"]) / "comparison.csv"
+    if not comp_path.exists():
+        return
+    df = pd.read_csv(comp_path)
+    tasks = list(df["task"].unique())
+    if not tasks:
+        return
+    sev_order = {"low": 0, "med": 1, "high": 2}
+    fig, axes = plt.subplots(len(tasks), 1, figsize=(10, 2.6 * len(tasks)),
+                             sharex=True)
+    axes = [axes] if len(tasks) == 1 else list(axes)
+    for ax, task in zip(axes, tasks):
+        sub = df[df["task"] == task].copy()
+        sub["order"] = sub["severity"].map(sev_order)
+        sub = sub.sort_values(["distortion", "order"])
+        labels = [f"{d}\n{s}" for d, s in zip(sub["distortion"], sub["severity"])]
+        x = np.arange(len(sub))
+        width = 0.38
+        ax.bar(x - width / 2, sub["recovery_enhance"], width,
+               color=VARIANT_STYLE["enhanced"]["color"], label="enhance")
+        if sub["recovery_finetune"].notna().any():
+            ax.bar(x + width / 2, sub["recovery_finetune"], width,
+                   color=VARIANT_STYLE["finetuned"]["color"], label="finetune")
+        ax.axhline(0, color=INK_MUTED, lw=1)
+        ax.set_ylabel(f"{task}\nrecovery", fontsize=9, color=INK)
+        ax.set_axisbelow(True)
+        ax.grid(True, axis="y", color=GRID, lw=0.8)
+        ax.tick_params(colors=INK_MUTED, labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color(GRID)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=8)
+    axes[0].legend(fontsize=8, loc="upper left")
+    fig.suptitle("Recovery vs distorted (positive = the improvement helped)",
+                 fontsize=12)
+    out = _figdir(cfg) / "recovery_bars.png"
+    fig.tight_layout()
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    print(f"[viz] {out}")
+
+
 def plot_per_class_ap(cfg: Dict) -> None:
     """Per-class AP bar chart for the clean detection baseline (top/bottom classes)."""
     mp = Path(cfg["paths"]["metrics_dir"]) / "detection__clean.json"
@@ -168,6 +214,7 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
     plt.ylabel("AP@[.5:.95]")
     plt.title(f"Per-class AP — clean vs {dtype}/{sev} (distorted / enhanced / fine-tuned)")
     plt.legend()
+    plt.gca().set_axisbelow(True)
     plt.grid(True, axis="y", alpha=0.3)
     out = _figdir(cfg) / f"per_class_ap_{dtype}_{sev}.png"
     plt.tight_layout()
@@ -220,6 +267,7 @@ def main() -> None:
     args = ap.parse_args()
     cfg = load_config(args.config)
     plot_acc_vs_snr(cfg)
+    plot_recovery_bars(cfg)
     plot_per_class_ap(cfg)
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)

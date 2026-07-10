@@ -93,9 +93,16 @@ def download_panoptic_annotations(coco_root: Path) -> None:
 
 
 def _select_image_ids(ann_path: str, n: int, seed: int,
-                      require_annotations: bool = True) -> List[int]:
+                      require_annotations: bool = True,
+                      min_class_instances: int = 0) -> List[int]:
     """Pick n image-ids deterministically. If require_annotations, only keep
-    images that have at least one annotation (so detection GT is non-empty)."""
+    images that have at least one annotation (so detection GT is non-empty).
+
+    If min_class_instances > 0, top up the seeded sample with additional images
+    (taken in the same shuffled order) until every category reaches that many
+    GT instances — bounded by the category's availability in the full split.
+    This keeps the sample seeded/deterministic while fixing the high-variance
+    per-class AP of rare classes."""
     from pycocotools.coco import COCO
 
     coco = COCO(ann_path)
@@ -104,7 +111,37 @@ def _select_image_ids(ann_path: str, n: int, seed: int,
         img_ids = [i for i in img_ids if len(coco.getAnnIds(imgIds=i)) > 0]
     rng = random.Random(seed)
     rng.shuffle(img_ids)
-    return sorted(img_ids[:n])
+    chosen = set(img_ids[:n])
+
+    if min_class_instances > 0:
+        def _counts(ids) -> Dict[int, int]:
+            c = {cid: 0 for cid in coco.getCatIds()}
+            for a in coco.loadAnns(coco.getAnnIds(imgIds=list(ids), iscrowd=False)):
+                c[a["category_id"]] += 1
+            return c
+
+        counts = _counts(chosen)
+        pool = img_ids[n:]                      # remaining, still in shuffled order
+        topped_up = 0
+        for cid in sorted(coco.getCatIds()):
+            if counts[cid] >= min_class_instances:
+                continue
+            has_cat = set(coco.getImgIds(catIds=[cid]))
+            for i in pool:
+                if counts[cid] >= min_class_instances:
+                    break
+                if i in has_cat and i not in chosen:
+                    chosen.add(i)
+                    topped_up += 1
+                    for a in coco.loadAnns(coco.getAnnIds(imgIds=i, iscrowd=False)):
+                        counts[a["category_id"]] += 1
+        short = {coco.loadCats([cid])[0]["name"]: c
+                 for cid, c in counts.items() if c < min_class_instances}
+        print(f"[data] class-coverage top-up: +{topped_up} images "
+              f"(floor={min_class_instances}); classes still short "
+              f"(exhausted in split): {short or 'none'}")
+
+    return sorted(chosen)
 
 
 def _download_images(ann_path: str, img_ids: List[int], out_dir: Path,
@@ -149,7 +186,8 @@ def build_subsets(cfg: Dict) -> None:
         download_panoptic_annotations(coco_root)
 
     # --- val subset (single source of truth) ---
-    val_ids = _select_image_ids(ds["ann_instances_val"], ds["val_subset_size"], seed)
+    val_ids = _select_image_ids(ds["ann_instances_val"], ds["val_subset_size"], seed,
+                                min_class_instances=ds.get("val_min_class_instances", 0))
     Path(ds["val_subset_file"]).parent.mkdir(parents=True, exist_ok=True)
     with open(ds["val_subset_file"], "w") as f:
         json.dump({"image_ids": val_ids, "seed": seed, "split": ds["val_split"]}, f, indent=2)

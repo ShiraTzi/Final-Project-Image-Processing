@@ -1,9 +1,0 @@
-{
-  "task": "features",
-  "variant": "distorted__gauss_noise__low",
-  "method": "ORB",
-  "match_ratio": 0.8173,
-  "n_images": 500,
-  "nfeatures": 800,
-  "distance_threshold": 64
-}

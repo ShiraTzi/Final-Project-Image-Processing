@@ -25,7 +25,11 @@ dataset:
   # panoptic GT (separate download: panoptic_annotations_trainval2017.zip)
   ann_panoptic_val: data/coco/annotations/panoptic_val2017.json
   panoptic_val_dir: data/coco/annotations/panoptic_val2017     # per-image PNG masks
-  val_subset_size: 500                # fixed seeded subset of val2017
+  val_subset_size: 1500               # fixed seeded subset of val2017
+  # After the seeded random sample, top up images so every class reaches at
+  # least this many GT instances (bounded by its availability in val2017).
+  # Fixes high-variance per-class AP for rare classes (e.g. microwave n=7).
+  val_min_class_instances: 20
   train_subset_size: 1500             # train2017 subset for fine-tuning (real GT)
   val_subset_file: data/splits/val_subset.json
   train_subset_file: data/splits/train_subset.json

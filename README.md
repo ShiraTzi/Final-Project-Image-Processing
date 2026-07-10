@@ -56,9 +56,13 @@ recorded per image in `results/metrics/snr_index.csv`.
 | **Motion blur** | camera shake / object motion | unsharp masking (deblur proxy) |
 
 ## Dataset
-COCO **val2017**, a **fixed seeded subset of 500 images** (single source of
+COCO **val2017**, a **fixed seeded subset of ~1500 images** (single source of
 truth: every variant runs on exactly these image-ids, sharing identical ground
-truth). A seeded **1500-image train2017 subset** is used only for fine-tuning.
+truth). The subset is a seeded random sample **topped up for class coverage**:
+after sampling, images are added (in the same shuffled order) until every
+category reaches ≥ `val_min_class_instances` GT instances (bounded by its
+availability in val2017) — so per-class AP is not dominated by 5-instance
+classes. A seeded **1500-image train2017 subset** is used only for fine-tuning.
 Only subset images are downloaded (via each image's `coco_url`); panoptic PQ
 additionally needs the COCO panoptic GT (~821MB, fetched automatically when the
 segmentation task is enabled).
