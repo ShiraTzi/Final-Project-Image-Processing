@@ -1,0 +1,10 @@
+{
+  "task": "features",
+  "variant": "enhanced__motion_blur__med",
+  "method": "ORB",
+  "match_ratio": 0.4438,
+  "n_images": 1521,
+  "n_skipped_no_clean_features": 0,
+  "nfeatures": 800,
+  "distance_threshold": 64
+}

@@ -71,7 +71,8 @@ segmentation task is enabled).
 
 ## Results
 
-All numbers are on the fixed 500-image COCO val2017 subset. Full per-cell
+All numbers are on the fixed 1,521-image, class-coverage-balanced COCO val2017
+subset. Full per-cell
 table: [results/metrics/comparison.md](results/metrics/comparison.md) /
 [`comparison.csv`](results/metrics/comparison.csv); long format with every
 metric in [`summary_long.csv`](results/metrics/summary_long.csv).
@@ -81,14 +82,14 @@ metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 | Task | Metric | Clean baseline |
 |---|---|---:|
 | Feature matching (ORB) | match ratio | 1.000 |
-| Object detection (YOLOv8n) | mAP@[.5:.95] | 0.363 |
-| Keypoint detection (Keypoint R-CNN) | OKS AP | 0.649 |
-| Panoptic segmentation (Panoptic FPN) | PQ | 0.400 (SQ 0.744 / RQ 0.489) |
+| Object detection (YOLOv8n) | mAP@[.5:.95] | 0.352 |
+| Keypoint detection (Keypoint R-CNN) | OKS AP | 0.657 |
+| Panoptic segmentation (Panoptic FPN) | PQ | 0.410 (SQ 0.775 / RQ 0.500) |
 
 ### Clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
 
-Each row is one experimental cell: the same model, the same 500 val images and
-ground truth — only the image quality changes. **How to read the columns:**
+Each row is one experimental cell: the same model, the same 1,521 val images
+and ground truth — only the image quality changes. **How to read the columns:**
 
 - **SNR (dB)** — measured signal-to-noise ratio of the distorted images vs the
   clean ones (lower = more corrupted).
@@ -104,66 +105,66 @@ ground truth — only the image quality changes. **How to read the columns:**
 - **recovery (enhance / finetune)** = improved − distorted (how much each
   improvement strategy won back; negative = made it worse).
 
-Example — `salt_pepper/high`: clean mAP 0.363 collapses to 0.077 (−0.286);
-the median filter restores it to 0.288 (+0.211), the fine-tuned model to
-0.163 (+0.087). Bold marks the notable wins.
+Example — `salt_pepper/high`: clean mAP 0.352 collapses to 0.073 (−0.280);
+the median filter restores it to 0.274 (+0.202), the fine-tuned model to
+0.148 (+0.076). Bold marks the notable wins.
 
 | task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | degradation | recovery (enhance) | recovery (finetune) |
 |:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
-| detection | gauss_noise | low | 19.6 | 0.363 | 0.301 | 0.288 | 0.266 | −0.062 | −0.013 | −0.035 |
-| detection | gauss_noise | med | 13.9 | 0.363 | 0.207 | 0.215 | 0.254 | −0.156 | +0.008 | **+0.047** |
-| detection | gauss_noise | high | 10.1 | 0.363 | 0.102 | 0.117 | **0.218** | −0.260 | +0.014 | **+0.115** |
-| detection | salt_pepper | low | 18.8 | 0.363 | 0.278 | 0.332 | 0.221 | −0.085 | +0.054 | −0.057 |
-| detection | salt_pepper | med | 11.9 | 0.363 | 0.158 | **0.314** | 0.192 | −0.205 | **+0.156** | +0.035 |
-| detection | salt_pepper | high | 8.3 | 0.363 | 0.077 | **0.288** | 0.163 | −0.286 | **+0.211** | +0.087 |
-| detection | motion_blur | low | 21.1 | 0.363 | 0.300 | 0.292 | 0.203 | −0.062 | −0.009 | −0.098 |
-| detection | motion_blur | med | 18.0 | 0.363 | 0.171 | 0.161 | 0.114 | −0.191 | −0.011 | −0.058 |
-| detection | motion_blur | high | 15.9 | 0.363 | 0.065 | 0.061 | 0.044 | −0.297 | −0.004 | −0.021 |
-| features | gauss_noise | low | 19.6 | 1.000 | 0.817 | 0.749 | — | −0.183 | −0.068 | — |
-| features | gauss_noise | med | 13.9 | 1.000 | 0.718 | 0.704 | — | −0.282 | −0.014 | — |
-| features | gauss_noise | high | 10.1 | 1.000 | 0.608 | 0.607 | — | −0.392 | −0.001 | — |
-| features | salt_pepper | low | 18.8 | 1.000 | 0.553 | 0.699 | — | −0.447 | **+0.146** | — |
-| features | salt_pepper | med | 11.9 | 1.000 | 0.408 | 0.682 | — | −0.592 | **+0.274** | — |
-| features | salt_pepper | high | 8.3 | 1.000 | 0.330 | 0.649 | — | −0.670 | **+0.319** | — |
-| features | motion_blur | low | 21.1 | 1.000 | 0.643 | 0.674 | — | −0.357 | +0.031 | — |
-| features | motion_blur | med | 18.0 | 1.000 | 0.401 | 0.444 | — | −0.599 | +0.043 | — |
-| features | motion_blur | high | 15.9 | 1.000 | 0.200 | 0.250 | — | −0.800 | +0.050 | — |
-| keypoints | gauss_noise | low | 19.6 | 0.649 | 0.556 | 0.490 | — | −0.093 | −0.066 | — |
-| keypoints | gauss_noise | med | 13.9 | 0.649 | 0.460 | 0.460 | — | −0.190 | −0.000 | — |
-| keypoints | gauss_noise | high | 10.1 | 0.649 | 0.343 | 0.340 | — | −0.307 | −0.003 | — |
-| keypoints | salt_pepper | low | 18.8 | 0.649 | 0.553 | 0.567 | — | −0.097 | +0.014 | — |
-| keypoints | salt_pepper | med | 11.9 | 0.649 | 0.430 | **0.551** | — | −0.219 | **+0.121** | — |
-| keypoints | salt_pepper | high | 8.3 | 0.649 | 0.317 | **0.515** | — | −0.332 | **+0.198** | — |
-| keypoints | motion_blur | low | 21.1 | 0.649 | 0.546 | 0.541 | — | −0.103 | −0.005 | — |
-| keypoints | motion_blur | med | 18.0 | 0.649 | 0.376 | 0.368 | — | −0.273 | −0.008 | — |
-| keypoints | motion_blur | high | 15.9 | 0.649 | 0.167 | 0.161 | — | −0.482 | −0.007 | — |
-| segmentation | gauss_noise | low | 19.6 | 0.400 | 0.343 | 0.291 | — | −0.057 | −0.052 | — |
-| segmentation | gauss_noise | med | 13.9 | 0.400 | 0.281 | 0.239 | — | −0.120 | −0.041 | — |
-| segmentation | gauss_noise | high | 10.1 | 0.400 | 0.196 | 0.182 | — | −0.204 | −0.014 | — |
-| segmentation | salt_pepper | low | 18.8 | 0.400 | 0.284 | **0.359** | — | −0.116 | **+0.075** | — |
-| segmentation | salt_pepper | med | 11.9 | 0.400 | 0.158 | **0.336** | — | −0.242 | **+0.178** | — |
-| segmentation | salt_pepper | high | 8.3 | 0.400 | 0.111 | **0.303** | — | −0.289 | **+0.192** | — |
-| segmentation | motion_blur | low | 21.1 | 0.400 | 0.335 | 0.332 | — | −0.065 | −0.003 | — |
-| segmentation | motion_blur | med | 18.0 | 0.400 | 0.228 | 0.232 | — | −0.172 | +0.003 | — |
-| segmentation | motion_blur | high | 15.9 | 0.400 | 0.116 | 0.118 | — | −0.284 | +0.003 | — |
+| detection | gauss_noise | low | 19.6 | 0.352 | 0.285 | 0.265 | 0.244 | −0.067 | −0.020 | −0.041 |
+| detection | gauss_noise | med | 13.9 | 0.352 | 0.193 | 0.203 | **0.235** | −0.159 | +0.010 | **+0.042** |
+| detection | gauss_noise | high | 9.9 | 0.352 | 0.091 | 0.106 | **0.202** | −0.261 | +0.015 | **+0.111** |
+| detection | salt_pepper | low | 18.7 | 0.352 | 0.265 | **0.318** | 0.207 | −0.088 | **+0.054** | −0.058 |
+| detection | salt_pepper | med | 11.8 | 0.352 | 0.151 | **0.301** | 0.176 | −0.201 | **+0.150** | +0.026 |
+| detection | salt_pepper | high | 8.2 | 0.352 | 0.073 | **0.274** | **0.148** | −0.280 | **+0.202** | **+0.076** |
+| detection | motion_blur | low | 20.9 | 0.352 | 0.288 | 0.281 | 0.192 | −0.065 | −0.007 | −0.096 |
+| detection | motion_blur | med | 17.7 | 0.352 | 0.161 | 0.152 | 0.098 | −0.191 | −0.009 | −0.063 |
+| detection | motion_blur | high | 15.6 | 0.352 | 0.056 | 0.054 | 0.034 | −0.296 | −0.001 | −0.022 |
+| features | gauss_noise | low | 19.6 | 1.000 | 0.818 | 0.754 | — | −0.182 | −0.064 | — |
+| features | gauss_noise | med | 13.9 | 1.000 | 0.721 | 0.707 | — | −0.280 | −0.013 | — |
+| features | gauss_noise | high | 9.9 | 1.000 | 0.609 | 0.607 | — | −0.391 | −0.001 | — |
+| features | salt_pepper | low | 18.7 | 1.000 | 0.556 | **0.698** | — | −0.444 | **+0.142** | — |
+| features | salt_pepper | med | 11.8 | 1.000 | 0.409 | **0.681** | — | −0.591 | **+0.271** | — |
+| features | salt_pepper | high | 8.2 | 1.000 | 0.331 | **0.648** | — | −0.669 | **+0.316** | — |
+| features | motion_blur | low | 20.9 | 1.000 | 0.641 | 0.672 | — | −0.359 | +0.031 | — |
+| features | motion_blur | med | 17.7 | 1.000 | 0.403 | **0.444** | — | −0.598 | **+0.041** | — |
+| features | motion_blur | high | 15.6 | 1.000 | 0.203 | **0.252** | — | −0.797 | **+0.050** | — |
+| keypoints | gauss_noise | low | 19.6 | 0.657 | 0.570 | 0.500 | — | −0.088 | −0.070 | — |
+| keypoints | gauss_noise | med | 13.9 | 0.657 | 0.474 | 0.453 | — | −0.183 | −0.021 | — |
+| keypoints | gauss_noise | high | 9.9 | 0.657 | 0.352 | 0.353 | — | −0.306 | +0.001 | — |
+| keypoints | salt_pepper | low | 18.7 | 0.657 | 0.557 | 0.582 | — | −0.101 | +0.025 | — |
+| keypoints | salt_pepper | med | 11.8 | 0.657 | 0.433 | **0.566** | — | −0.224 | **+0.133** | — |
+| keypoints | salt_pepper | high | 8.2 | 0.657 | 0.325 | **0.537** | — | −0.332 | **+0.212** | — |
+| keypoints | motion_blur | low | 20.9 | 0.657 | 0.552 | 0.543 | — | −0.105 | −0.009 | — |
+| keypoints | motion_blur | med | 17.7 | 0.657 | 0.374 | 0.364 | — | −0.283 | −0.010 | — |
+| keypoints | motion_blur | high | 15.6 | 0.657 | 0.163 | 0.155 | — | −0.495 | −0.007 | — |
+| segmentation | gauss_noise | low | 19.6 | 0.410 | 0.355 | 0.295 | — | −0.055 | −0.060 | — |
+| segmentation | gauss_noise | med | 13.9 | 0.410 | 0.289 | 0.244 | — | −0.120 | −0.046 | — |
+| segmentation | gauss_noise | high | 9.9 | 0.410 | 0.201 | 0.185 | — | −0.208 | −0.016 | — |
+| segmentation | salt_pepper | low | 18.7 | 0.410 | 0.282 | **0.361** | — | −0.128 | **+0.080** | — |
+| segmentation | salt_pepper | med | 11.8 | 0.410 | 0.159 | **0.344** | — | −0.251 | **+0.185** | — |
+| segmentation | salt_pepper | high | 8.2 | 0.410 | 0.107 | **0.309** | — | −0.302 | **+0.202** | — |
+| segmentation | motion_blur | low | 20.9 | 0.410 | 0.342 | 0.339 | — | −0.068 | −0.003 | — |
+| segmentation | motion_blur | med | 17.7 | 0.410 | 0.230 | 0.229 | — | −0.179 | −0.001 | — |
+| segmentation | motion_blur | high | 15.6 | 0.410 | 0.115 | 0.116 | — | −0.295 | +0.001 | — |
 
 ### Key findings
 
 - **Degradation tracks SNR monotonically for every task** — each severity step
   lowers SNR and performance together (see the per-SNR curves below).
   Motion blur is the most destructive corruption for localization-heavy tasks
-  (keypoints −0.48, ORB −0.80 at high severity) even though its SNR is higher
+  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is higher
   than the noise corruptions' — SNR alone does not fully predict task damage.
 - **Classical enhancement is corruption-specific.** The median filter
   essentially rescues salt-and-pepper for every task (e.g. detection
-  0.077 → 0.288, PQ 0.111 → 0.303, ORB 0.330 → 0.649 at high severity).
+  0.073 → 0.274, PQ 0.107 → 0.309, ORB 0.331 → 0.648 at high severity).
   NLM denoising barely helps (and slightly hurts low-severity cells) because it
   smooths away the textures/corners the models and ORB rely on; unsharp masking
   cannot undo motion blur (a genuine deconvolution problem).
 - **Fine-tuning recovers in-domain and transfers within the corruption family.**
   Trained only on gauss_noise/high, YOLOv8n more than doubles its mAP on that
-  cell (0.102 → 0.218) and improves the other noise-like cells
-  (salt_pepper/high +0.087, gauss_noise/med +0.047), but *hurts* motion-blur
+  cell (0.091 → 0.202) and improves the other noise-like cells
+  (salt_pepper/high +0.076, gauss_noise/med +0.042), but *hurts* motion-blur
   cells — fine-tuning on one corruption does not buy robustness to a different
   corruption family.
 - **Enhancement and fine-tuning are complementary:** enhancement wins where the
@@ -171,6 +172,12 @@ the median filter restores it to 0.288 (+0.211), the fine-tuned model to
   it is not (heavy Gaussian noise).
 
 ### Figures
+
+The improvement trend at a glance — recovery (improved − distorted) per cell,
+one panel per task; green = classical enhancement, amber = fine-tuning, bars
+above zero mean the strategy helped:
+
+![recovery per cell](results/figures/recovery_bars.png)
 
 Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
 fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
@@ -196,23 +203,24 @@ Input/output examples — clean / distorted (high severity) / enhanced:
 ![salt & pepper grid](results/figures/grid_salt_pepper.png)
 ![motion blur grid](results/figures/grid_motion_blur.png)
 
-### Validity: is the 500-image subset representative?
+### Validity: is the 1,521-image subset representative and class-balanced?
 
-The subset is a **seeded random sample**, and its class distribution matches
-full val2017 almost exactly (class-proportion correlation **r = 0.996**,
-3,509 GT instances over 500 images). The clean detection mAP (0.363) is within
-0.01 of YOLOv8n's published full-val2017 mAP (~0.373), and the keypoints task
-rests on 1,018 person instances — so the **aggregate** numbers and all
-**paired deltas** (same images and GT across every variant) are trustworthy.
+The subset is a **seeded random sample of 1,500 images topped up with 21
+images for class coverage** (deterministic, same shuffled order), giving
+11,129 GT instances. Checks:
 
-Known limits, called out for honesty:
-- 1 of 80 classes (`toaster`) has zero instances in the subset and is simply
-  excluded from mAP; 5 classes have fewer than 10 instances (parking meter 2,
-  scissors 3, hair drier 4, hot dog 5, microwave 7).
-- **Per-class** AP for those rare classes is a high-variance estimate — e.g.
-  the striking microwave recovery (0.00 → 0.47 after fine-tuning) is based on
-  only 7 objects. The per-class figure therefore shows the subset GT count
-  (n=) under each class name; read small-n bars as direction, not magnitude.
+- Class distribution matches full val2017 almost exactly: class-proportion
+  correlation **r = 0.999**.
+- Clean detection mAP (0.352) is within 0.02 of YOLOv8n's published
+  full-val2017 mAP (~0.373); keypoints rest on **3,273 person instances**.
+- **Every one of the 80 classes has ≥ 20 GT instances** (median 81), except
+  `toaster` (9) and `hair drier` (11) — for which the subset already contains
+  **100% of their instances in all of val2017**, so no sample can do better.
+- All comparisons are **paired** (identical images and GT across every
+  variant), so degradation/recovery deltas are not affected by sampling.
+
+With the coverage floor, per-class AP now rests on ≥ 20 objects per class
+(the per-class figure still shows the exact n= under each class name).
 
 ### Fine-tuning setup (Phase 4)
 
@@ -220,11 +228,11 @@ Known limits, called out for honesty:
   (same deterministic per-image RNG as the val distortions), **real COCO boxes**
   converted to YOLO labels (no pseudo-labels).
 - Training: `yolov8n.pt` continued for 20 epochs, imgsz 640, batch 16 —
-  ~6 minutes on one NVIDIA L4 (SLURM job, 11:40 total including the 9-cell
-  evaluation). Checkpoint: `models/yolov8_finetuned.pt` (the clean baseline
-  model is untouched).
-- Evaluation: the fine-tuned detector runs on **all 9 distorted val cells**
-  (held out — no leakage), filling the `finetuned` column above.
+  ~6 minutes on one NVIDIA L4. Checkpoint: `models/yolov8_finetuned.pt`
+  (the clean baseline model is untouched).
+- Evaluation: the fine-tuned detector runs on **all 9 distorted val cells** of
+  the 1,521-image subset (held out — the model never sees any val2017 image
+  during training, so there is no leakage), filling the `finetuned` column above.
 
 ---
 
