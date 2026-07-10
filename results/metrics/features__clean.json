@@ -1,0 +1,9 @@
+{
+  "task": "features",
+  "variant": "clean",
+  "method": "ORB",
+  "match_ratio": 1.0,
+  "n_images": 500,
+  "nfeatures": 800,
+  "distance_threshold": 64
+}

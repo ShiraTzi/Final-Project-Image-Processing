@@ -31,10 +31,11 @@ data ──► distort ──► enhance ──┐
 ```
 
 ## Tasks and models
-Three tasks spanning low-level and high-level vision (the main-branch task set):
+Four tasks spanning low-level and high-level vision:
 
 | Task | Model / algorithm | Stack | Metric |
 |---|---|---|---|
+| Feature matching (**low-level**) | **ORB** + BFMatcher (Hamming, cross-check) | OpenCV | match ratio vs clean (good matches / clean keypoints) |
 | Object detection | **YOLOv8n** (COCO-pretrained) | ultralytics | COCOeval bbox mAP |
 | Keypoint detection | **Keypoint R-CNN** ResNet50-FPN (COCO-pretrained) | torchvision | COCOeval keypoints (OKS) |
 | Panoptic segmentation | **Panoptic FPN** R50 (COCO-pretrained) | detectron2 | Panoptic Quality (PQ/SQ/RQ) |
@@ -61,6 +62,126 @@ truth). A seeded **1500-image train2017 subset** is used only for fine-tuning.
 Only subset images are downloaded (via each image's `coco_url`); panoptic PQ
 additionally needs the COCO panoptic GT (~821MB, fetched automatically when the
 segmentation task is enabled).
+
+---
+
+## Results
+
+All numbers are on the fixed 500-image COCO val2017 subset. Full per-cell
+table: [results/metrics/comparison.md](results/metrics/comparison.md) /
+[`comparison.csv`](results/metrics/comparison.csv); long format with every
+metric in [`summary_long.csv`](results/metrics/summary_long.csv).
+
+### Clean baselines (Phase 1)
+
+| Task | Metric | Clean baseline |
+|---|---|---:|
+| Feature matching (ORB) | match ratio | 1.000 |
+| Object detection (YOLOv8n) | mAP@[.5:.95] | 0.363 |
+| Keypoint detection (Keypoint R-CNN) | OKS AP | 0.649 |
+| Panoptic segmentation (Panoptic FPN) | PQ | 0.400 (SQ 0.744 / RQ 0.489) |
+
+### Clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
+
+`degradation` = distorted − clean; `recovery_*` = improved − distorted.
+Fine-tuning applies to the detection task only (the DL improvement); it was
+**trained on gauss_noise/high** and evaluated on **all** distorted cells.
+
+| task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | degradation | recovery (enhance) | recovery (finetune) |
+|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| detection | gauss_noise | low | 19.6 | 0.363 | 0.301 | 0.288 | 0.266 | −0.062 | −0.013 | −0.035 |
+| detection | gauss_noise | med | 13.9 | 0.363 | 0.207 | 0.215 | 0.254 | −0.156 | +0.008 | **+0.047** |
+| detection | gauss_noise | high | 10.1 | 0.363 | 0.102 | 0.117 | **0.218** | −0.260 | +0.014 | **+0.115** |
+| detection | salt_pepper | low | 18.8 | 0.363 | 0.278 | 0.332 | 0.221 | −0.085 | +0.054 | −0.057 |
+| detection | salt_pepper | med | 11.9 | 0.363 | 0.158 | **0.314** | 0.192 | −0.205 | **+0.156** | +0.035 |
+| detection | salt_pepper | high | 8.3 | 0.363 | 0.077 | **0.288** | 0.163 | −0.286 | **+0.211** | +0.087 |
+| detection | motion_blur | low | 21.1 | 0.363 | 0.300 | 0.292 | 0.203 | −0.062 | −0.009 | −0.098 |
+| detection | motion_blur | med | 18.0 | 0.363 | 0.171 | 0.161 | 0.114 | −0.191 | −0.011 | −0.058 |
+| detection | motion_blur | high | 15.9 | 0.363 | 0.065 | 0.061 | 0.044 | −0.297 | −0.004 | −0.021 |
+| features | gauss_noise | low | 19.6 | 1.000 | 0.817 | 0.749 | — | −0.183 | −0.068 | — |
+| features | gauss_noise | med | 13.9 | 1.000 | 0.718 | 0.704 | — | −0.282 | −0.014 | — |
+| features | gauss_noise | high | 10.1 | 1.000 | 0.608 | 0.607 | — | −0.392 | −0.001 | — |
+| features | salt_pepper | low | 18.8 | 1.000 | 0.553 | 0.699 | — | −0.447 | **+0.146** | — |
+| features | salt_pepper | med | 11.9 | 1.000 | 0.408 | 0.682 | — | −0.592 | **+0.274** | — |
+| features | salt_pepper | high | 8.3 | 1.000 | 0.330 | 0.649 | — | −0.670 | **+0.319** | — |
+| features | motion_blur | low | 21.1 | 1.000 | 0.643 | 0.674 | — | −0.357 | +0.031 | — |
+| features | motion_blur | med | 18.0 | 1.000 | 0.401 | 0.444 | — | −0.599 | +0.043 | — |
+| features | motion_blur | high | 15.9 | 1.000 | 0.200 | 0.250 | — | −0.800 | +0.050 | — |
+| keypoints | gauss_noise | low | 19.6 | 0.649 | 0.556 | 0.490 | — | −0.093 | −0.066 | — |
+| keypoints | gauss_noise | med | 13.9 | 0.649 | 0.460 | 0.460 | — | −0.190 | −0.000 | — |
+| keypoints | gauss_noise | high | 10.1 | 0.649 | 0.343 | 0.340 | — | −0.307 | −0.003 | — |
+| keypoints | salt_pepper | low | 18.8 | 0.649 | 0.553 | 0.567 | — | −0.097 | +0.014 | — |
+| keypoints | salt_pepper | med | 11.9 | 0.649 | 0.430 | **0.551** | — | −0.219 | **+0.121** | — |
+| keypoints | salt_pepper | high | 8.3 | 0.649 | 0.317 | **0.515** | — | −0.332 | **+0.198** | — |
+| keypoints | motion_blur | low | 21.1 | 0.649 | 0.546 | 0.541 | — | −0.103 | −0.005 | — |
+| keypoints | motion_blur | med | 18.0 | 0.649 | 0.376 | 0.368 | — | −0.273 | −0.008 | — |
+| keypoints | motion_blur | high | 15.9 | 0.649 | 0.167 | 0.161 | — | −0.482 | −0.007 | — |
+| segmentation | gauss_noise | low | 19.6 | 0.400 | 0.343 | 0.291 | — | −0.057 | −0.052 | — |
+| segmentation | gauss_noise | med | 13.9 | 0.400 | 0.281 | 0.239 | — | −0.120 | −0.041 | — |
+| segmentation | gauss_noise | high | 10.1 | 0.400 | 0.196 | 0.182 | — | −0.204 | −0.014 | — |
+| segmentation | salt_pepper | low | 18.8 | 0.400 | 0.284 | **0.359** | — | −0.116 | **+0.075** | — |
+| segmentation | salt_pepper | med | 11.9 | 0.400 | 0.158 | **0.336** | — | −0.242 | **+0.178** | — |
+| segmentation | salt_pepper | high | 8.3 | 0.400 | 0.111 | **0.303** | — | −0.289 | **+0.192** | — |
+| segmentation | motion_blur | low | 21.1 | 0.400 | 0.335 | 0.332 | — | −0.065 | −0.003 | — |
+| segmentation | motion_blur | med | 18.0 | 0.400 | 0.228 | 0.232 | — | −0.172 | +0.003 | — |
+| segmentation | motion_blur | high | 15.9 | 0.400 | 0.116 | 0.118 | — | −0.284 | +0.003 | — |
+
+### Key findings
+
+- **Degradation tracks SNR monotonically for every task** — each severity step
+  lowers SNR and performance together (see the per-SNR curves below).
+  Motion blur is the most destructive corruption for localization-heavy tasks
+  (keypoints −0.48, ORB −0.80 at high severity) even though its SNR is higher
+  than the noise corruptions' — SNR alone does not fully predict task damage.
+- **Classical enhancement is corruption-specific.** The median filter
+  essentially rescues salt-and-pepper for every task (e.g. detection
+  0.077 → 0.288, PQ 0.111 → 0.303, ORB 0.330 → 0.649 at high severity).
+  NLM denoising barely helps (and slightly hurts low-severity cells) because it
+  smooths away the textures/corners the models and ORB rely on; unsharp masking
+  cannot undo motion blur (a genuine deconvolution problem).
+- **Fine-tuning recovers in-domain and transfers within the corruption family.**
+  Trained only on gauss_noise/high, YOLOv8n more than doubles its mAP on that
+  cell (0.102 → 0.218) and improves the other noise-like cells
+  (salt_pepper/high +0.087, gauss_noise/med +0.047), but *hurts* motion-blur
+  cells — fine-tuning on one corruption does not buy robustness to a different
+  corruption family.
+- **Enhancement and fine-tuning are complementary:** enhancement wins where the
+  corruption is classically invertible (impulse noise), fine-tuning wins where
+  it is not (heavy Gaussian noise).
+
+### Figures
+
+Performance vs SNR (one line per distortion; distorted solid, enhanced dashed,
+fine-tuned dotted; clean baseline as horizontal line):
+
+![detection vs SNR](results/figures/acc_vs_snr_detection.png)
+![features vs SNR](results/figures/acc_vs_snr_features.png)
+![keypoints vs SNR](results/figures/acc_vs_snr_keypoints.png)
+![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
+
+Per-class AP (clean baseline, and clean vs distorted vs enhanced vs fine-tuned
+on the fine-tune cell gauss_noise/high):
+
+![per-class AP clean](results/figures/per_class_ap_clean.png)
+![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
+
+Input/output examples — clean / distorted (high severity) / enhanced:
+
+![gauss noise grid](results/figures/grid_gauss_noise.png)
+![salt & pepper grid](results/figures/grid_salt_pepper.png)
+![motion blur grid](results/figures/grid_motion_blur.png)
+
+### Fine-tuning setup (Phase 4)
+
+- Data: 1,500-image train2017 subset, distorted with **gauss_noise/high**
+  (same deterministic per-image RNG as the val distortions), **real COCO boxes**
+  converted to YOLO labels (no pseudo-labels).
+- Training: `yolov8n.pt` continued for 20 epochs, imgsz 640, batch 16 —
+  ~6 minutes on one NVIDIA L4 (SLURM job, 11:40 total including the 9-cell
+  evaluation). Checkpoint: `models/yolov8_finetuned.pt` (the clean baseline
+  model is untouched).
+- Evaluation: the fine-tuned detector runs on **all 9 distorted val cells**
+  (held out — no leakage), filling the `finetuned` column above.
 
 ---
 
@@ -124,6 +245,7 @@ python -m src.inference --task keypoints --variant clean
 python -m src.metrics   --task segmentation --variant clean   # detectron2 subprocess
 python -m src.metrics   --task detection    --variant clean
 python -m src.metrics   --task keypoints    --variant clean
+python -m src.metrics   --task features     --variant clean   # ORB (CPU, no preds needed)
 ```
 
 ### Phase 2 — Distortion
@@ -158,7 +280,7 @@ python scripts/run_pipeline.py --only report
 ## Repository structure
 ```
 configs/config.yaml        # single source of truth: paths, seed, subset sizes,
-                           #   distortions×severities, tasks, yolo/finetune/segmentation params
+                           #   distortions×severities, tasks, orb/yolo/finetune/segmentation params
 requirements.txt           # main venv deps
 src/
   config.py                # config loader + variant/path helpers
@@ -195,6 +317,9 @@ All knobs live in [configs/config.yaml](configs/config.yaml):
 - `results/figures/*.png` — acc-vs-SNR curves, per-class AP bars, image grids
 
 ## Metrics
+- **Features** (ORB): **match ratio** — good BFMatcher(Hamming, cross-check)
+  matches (distance ≤ 64) between clean and variant descriptors / clean
+  keypoints; clean vs clean = 1.0 by construction.
 - **Detection** (YOLOv8): COCOeval **bbox mAP**, mAP@.50, mAP@.75, per-class AP, small/med/large.
 - **Keypoints** (Keypoint R-CNN): COCOeval **keypoints** (OKS) AP.
 - **Segmentation** (Panoptic FPN): **PQ / SQ / RQ** via panopticapi (things & stuff).
@@ -205,10 +330,11 @@ All knobs live in [configs/config.yaml](configs/config.yaml):
 **real** COCO boxes as YOLO labels, and continues training the **pretrained**
 `yolov8n.pt` on that data (transfer learning — same architecture, updated
 weights). The result is saved separately as `models/yolov8_finetuned.pt`
-(the clean baseline model is untouched) and evaluated on the *distorted val*
-subset (held out — no leakage). yolov8n is tiny and starts pretrained, so this
-is light (~minutes on one GPU). Tune via `finetune.epochs`, `imgsz`,
-`dataset.train_subset_size`.
+(the clean baseline model is untouched) and evaluated on **all nine** distorted
+val cells (held out — no leakage), so the comparison table shows both in-domain
+recovery and cross-distortion generalization. yolov8n is tiny and starts
+pretrained, so this is light (~6 minutes on one L4 GPU). Tune via
+`finetune.epochs`, `imgsz`, `dataset.train_subset_size`.
 
 ---
 

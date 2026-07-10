@@ -14,23 +14,23 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 
-from src.config import load_config, ensure_dirs, variant_tag
-from src.data import load_subset_ids
+from src.config import load_config, ensure_dirs, variant_image_dir, variant_tag
+from src.data import get_coco, load_subset_ids
 
 
 # --------------------------------------------------------------------------- #
 # COCOeval (detection / keypoints)
 # --------------------------------------------------------------------------- #
 def _coco_eval(ann_path: str, pred_path: str, img_ids: List[int], iou_type: str):
-    from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
 
-    coco_gt = COCO(ann_path)
+    coco_gt = get_coco(ann_path)
     with open(pred_path) as f:
         preds = json.load(f)
     if not preds:
@@ -111,12 +111,84 @@ def evaluate_segmentation(cfg: Dict, variant: str, dtype=None, severity=None) ->
 
 
 # --------------------------------------------------------------------------- #
+# Low-level task: ORB feature matching (no GT needed — clean image is the ref)
+# --------------------------------------------------------------------------- #
+@lru_cache(maxsize=None)
+def _clean_orb_descriptors(path: str, nfeatures: int):
+    """Cached (n_keypoints, descriptors) of a clean image — the same clean
+    reference is matched against all 19 variants, so extract it once."""
+    import cv2
+
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(f"unreadable clean image: {path}")
+    orb = cv2.ORB_create(nfeatures=nfeatures)
+    kps, desc = orb.detectAndCompute(img, None)
+    return len(kps), desc
+
+
+def evaluate_features(cfg: Dict, variant: str, dtype=None, severity=None) -> Dict:
+    """Mean ORB match ratio over the val subset: descriptors from the clean
+    image matched (BFMatcher Hamming, crossCheck) against the variant image;
+    good = distance <= threshold; ratio = good / clean keypoints.
+    Clean vs clean = 1.0 baseline."""
+    import cv2
+    from tqdm import tqdm
+
+    nfeatures = int(cfg["orb"]["nfeatures"])
+    dist_thr = int(cfg["orb"]["distance_threshold"])
+
+    ds = cfg["dataset"]
+    coco = get_coco(ds["ann_instances_val"])
+    img_ids = load_subset_ids(ds["val_subset_file"])
+    clean_dir = variant_image_dir(cfg, "clean")
+    var_dir = variant_image_dir(cfg, variant, dtype, severity)
+    if not var_dir.is_dir():
+        raise FileNotFoundError(f"variant image dir missing: {var_dir} "
+                                "(run the distort/enhance stage first)")
+
+    orb = cv2.ORB_create(nfeatures=nfeatures)
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    ratios = []
+    n_skipped = 0
+    for im in tqdm(coco.loadImgs(img_ids), desc="features", leave=False):
+        var = cv2.imread(str(var_dir / im["file_name"]), cv2.IMREAD_GRAYSCALE)
+        if var is None:
+            raise FileNotFoundError(f"unreadable variant image: {var_dir / im['file_name']}")
+        n_clean_kps, desc1 = _clean_orb_descriptors(str(clean_dir / im["file_name"]), nfeatures)
+        if desc1 is None or n_clean_kps == 0:
+            n_skipped += 1          # no clean features -> ratio undefined (0/0), skip
+            continue
+        _, desc2 = orb.detectAndCompute(var, None)
+        if desc2 is None:
+            ratios.append(0.0)      # variant destroyed all features -> genuine 0
+            continue
+        matches = matcher.match(desc1, desc2)
+        good = [m for m in matches if m.distance <= dist_thr]
+        ratios.append(len(good) / n_clean_kps)
+
+    if not ratios:
+        raise RuntimeError(f"features/{variant_tag(variant, dtype, severity)}: "
+                           "no images could be scored")
+    return {
+        "task": "features", "variant": variant_tag(variant, dtype, severity),
+        "method": "ORB",
+        "match_ratio": round(float(np.mean(ratios)), 4),
+        "n_images": len(ratios), "n_skipped_no_clean_features": n_skipped,
+        "nfeatures": nfeatures, "distance_threshold": dist_thr,
+    }
+
+
+# --------------------------------------------------------------------------- #
 def evaluate(cfg: Dict, task: str, variant: str, dtype=None, severity=None) -> Dict:
     if task == "segmentation":
         # subprocess writes the metric json itself; just return it.
         return evaluate_segmentation(cfg, variant, dtype, severity)
 
-    res = evaluate_coco(cfg, task, variant, dtype, severity)
+    if task == "features":
+        res = evaluate_features(cfg, variant, dtype, severity)
+    else:
+        res = evaluate_coco(cfg, task, variant, dtype, severity)
     tag = variant_tag(variant, dtype, severity)
     out_path = Path(cfg["paths"]["metrics_dir"]) / f"{task}__{tag}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +201,8 @@ def evaluate(cfg: Dict, task: str, variant: str, dtype=None, severity=None) -> D
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
-    ap.add_argument("--task", required=True, choices=["detection", "keypoints", "segmentation"])
+    ap.add_argument("--task", required=True,
+                    choices=["detection", "keypoints", "segmentation", "features"])
     ap.add_argument("--variant", required=True, choices=["clean", "distorted", "enhanced"])
     ap.add_argument("--dtype", default=None)
     ap.add_argument("--severity", default=None)

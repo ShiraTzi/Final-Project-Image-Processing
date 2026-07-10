@@ -96,11 +96,15 @@ def build_yolo_dataset(cfg: Dict) -> Path:
 
 
 def train(cfg: Dict) -> Path:
+    from ultralytics import YOLO
+
     ft = cfg["finetune"]
     data_yaml = build_yolo_dataset(cfg)
     wd = _workdir(cfg)
 
-    model = get_yolo_model(cfg["yolo"]["weights"])
+    # deliberately NOT get_yolo_model(): .train() mutates the model in place,
+    # which would poison the shared cached pretrained instance.
+    model = YOLO(cfg["yolo"]["weights"])
     model.train(
         data=str(data_yaml),
         epochs=ft["epochs"],
@@ -121,16 +125,40 @@ def train(cfg: Dict) -> Path:
     return ckpt
 
 
-def evaluate_finetuned(cfg: Dict) -> None:
-    """Run the fine-tuned YOLO on the distorted val subset, then COCOeval."""
+def evaluate_finetuned(cfg: Dict, force: bool = False) -> list:
+    """Run the fine-tuned YOLO on every distorted val variant, then COCOeval.
+
+    Training used a single distortion/severity (cfg.finetune), but evaluating on
+    all of them shows both in-domain recovery and cross-distortion generalization
+    (fills the whole `finetuned` column in the comparison table).
+    Resumable like the other stages: cells whose metric JSON exists are skipped,
+    and one failed cell doesn't abort the rest.  Returns the failed tags."""
+    import traceback
+
+    from src.config import variant_tag
     from src.inference import run_inference
     from src.metrics import evaluate
 
-    ft = cfg["finetune"]
-    dtype, severity = ft["distortion"], ft["severity"]
     ckpt = str(_checkpoint_path(cfg))
-    run_inference(cfg, "detection", "finetuned", dtype, severity, checkpoint=ckpt)
-    evaluate(cfg, "detection", "finetuned", dtype, severity)
+    metrics_dir = Path(cfg["paths"]["metrics_dir"])
+    preds_dir = Path(cfg["paths"]["preds_dir"])
+    failures = []
+    for dtype, spec in cfg["distortions"].items():
+        for severity in spec["severities"]:
+            tag = variant_tag("finetuned", dtype, severity)
+            if (metrics_dir / f"detection__{tag}.json").exists() and not force:
+                print(f"[finetune] skip {tag}: metrics exist")
+                continue
+            try:
+                if force or not (preds_dir / f"detection__{tag}.json").exists():
+                    run_inference(cfg, "detection", "finetuned", dtype, severity,
+                                  checkpoint=ckpt)
+                evaluate(cfg, "detection", "finetuned", dtype, severity)
+            except Exception:  # noqa: BLE001 — one bad cell shouldn't abort the rest
+                traceback.print_exc()
+                print(f"[finetune] FAILED eval {tag}")
+                failures.append(f"finetune:detection/{tag}")
+    return failures
 
 
 def main() -> None:
@@ -143,7 +171,9 @@ def main() -> None:
     if args.mode in ("train", "both"):
         train(cfg)
     if args.mode in ("eval", "both"):
-        evaluate_finetuned(cfg)
+        failures = evaluate_finetuned(cfg)
+        if failures:
+            raise SystemExit(f"[finetune] {len(failures)} cell(s) failed: {failures}")
 
 
 if __name__ == "__main__":

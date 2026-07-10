@@ -19,7 +19,8 @@ import pandas as pd
 from src.config import load_config
 
 
-PRIMARY = {"detection": "mAP", "keypoints": "mAP", "segmentation": "PQ"}
+PRIMARY = {"features": "match_ratio", "detection": "mAP", "keypoints": "mAP",
+           "segmentation": "PQ"}
 
 
 def _mean_snr_lookup(cfg: Dict) -> Dict:

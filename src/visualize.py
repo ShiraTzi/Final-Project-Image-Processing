@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from src.config import load_config, variant_image_dir
+from src.config import load_config, variant_image_dir, variant_tag
 
 
 def _figdir(cfg: Dict) -> Path:
@@ -92,6 +92,48 @@ def plot_per_class_ap(cfg: Dict) -> None:
     print(f"[viz] {out}")
 
 
+def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
+    """Grouped per-class AP bars: clean vs distorted vs enhanced vs finetuned,
+    on the fine-tune distortion/severity (worst-case cell)."""
+    ft = cfg.get("finetune", {})
+    dtype, sev = ft.get("distortion"), ft.get("severity")
+    if not dtype:
+        return
+    mdir = Path(cfg["paths"]["metrics_dir"])
+    variants = {
+        v: mdir / f"detection__{variant_tag(v, dtype, sev)}.json"
+        for v in ("clean", "distorted", "enhanced", "finetuned")
+    }
+    per_class = {}
+    for name, p in variants.items():
+        if p.exists():
+            with open(p) as f:
+                per_class[name] = json.load(f).get("per_class_ap") or {}
+    if "clean" not in per_class or len(per_class) < 2:
+        return
+
+    top = sorted(((v, k) for k, v in per_class["clean"].items() if not np.isnan(v)),
+                 reverse=True)[:top_n]
+    names = [k for _, k in top]
+    x = np.arange(len(names))
+    group_w = 0.8
+    width = group_w / len(per_class)
+    plt.figure(figsize=(14, 5))
+    for i, (variant, pcl) in enumerate(per_class.items()):
+        vals = [pcl.get(n, np.nan) for n in names]
+        plt.bar(x + i * width, vals, width, label=variant)
+    plt.xticks(x + (group_w - width) / 2, names, rotation=45, ha="right", fontsize=8)
+    plt.ylabel("AP@[.5:.95]")
+    plt.title(f"Per-class AP — clean vs {dtype}/{sev} (distorted / enhanced / fine-tuned)")
+    plt.legend()
+    plt.grid(True, axis="y", alpha=0.3)
+    out = _figdir(cfg) / f"per_class_ap_{dtype}_{sev}.png"
+    plt.tight_layout()
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"[viz] {out}")
+
+
 def plot_image_grids(cfg: Dict, n: int = 4) -> None:
     """clean / distorted / enhanced grid for the first n subset images per distortion."""
     from pycocotools.coco import COCO
@@ -137,6 +179,7 @@ def main() -> None:
     cfg = load_config(args.config)
     plot_acc_vs_snr(cfg)
     plot_per_class_ap(cfg)
+    plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
 
 

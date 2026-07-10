@@ -24,7 +24,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from src.config import load_config, ensure_dirs, variant_image_dir, variant_tag
-from src.data import load_subset_ids
+from src.data import get_coco, load_subset_ids
 from src.models import (
     COCO80_TO_91, get_keypoint_model, get_yolo_model, resolve_device, yolo_device,
 )
@@ -32,10 +32,8 @@ from src.models import (
 
 def _subset_images(cfg: Dict, variant: str, dtype, severity):
     """Yield (image_id, file_path) for the fixed val subset in the chosen variant dir."""
-    from pycocotools.coco import COCO
-
     ds = cfg["dataset"]
-    coco = COCO(ds["ann_instances_val"])
+    coco = get_coco(ds["ann_instances_val"])
     img_ids = load_subset_ids(ds["val_subset_file"])
     img_dir = variant_image_dir(cfg, variant, dtype, severity)
     for im in coco.loadImgs(img_ids):

@@ -17,6 +17,7 @@ import json
 import random
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List
 
@@ -168,6 +169,15 @@ def build_subsets(cfg: Dict) -> None:
 def load_subset_ids(path: str) -> List[int]:
     with open(path) as f:
         return json.load(f)["image_ids"]
+
+
+@lru_cache(maxsize=None)
+def get_coco(ann_path: str):
+    """Cached pycocotools COCO index — parsing instances_val2017.json takes
+    ~15-20s and every (task, variant) evaluation needs the same one."""
+    from pycocotools.coco import COCO
+
+    return COCO(ann_path)
 
 
 def main() -> None:

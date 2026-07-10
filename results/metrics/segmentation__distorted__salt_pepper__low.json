@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "variant": "distorted__salt_pepper__low",
+  "PQ": 0.2839,
+  "SQ": 0.6887,
+  "RQ": 0.3535,
+  "PQ_things": 0.3645,
+  "PQ_stuff": 0.1637,
+  "n_images": 500
+}

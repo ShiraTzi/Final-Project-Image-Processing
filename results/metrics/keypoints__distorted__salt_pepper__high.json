@@ -1,0 +1,20 @@
+{
+  "task": "keypoints",
+  "variant": "distorted__salt_pepper__high",
+  "iou_type": "keypoints",
+  "mAP": 0.3172,
+  "mAP_50": 0.5756,
+  "mAP_75": 0.3061,
+  "stats": [
+    0.3172,
+    0.5756,
+    0.3061,
+    0.2543,
+    0.4022,
+    0.3912,
+    0.6548,
+    0.3926,
+    0.3228,
+    0.4771
+  ]
+}

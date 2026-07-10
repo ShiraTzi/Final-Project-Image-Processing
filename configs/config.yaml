@@ -30,14 +30,21 @@ dataset:
   val_subset_file: data/splits/val_subset.json
   train_subset_file: data/splits/train_subset.json
 
-# Tasks to run (main README task set, low+high level):
+# Tasks to run (low + high level):
+#   features     = ORB keypoint matching vs clean (low-level, CPU, no GT needed)
 #   detection    = YOLOv8 (object detection, COCOeval bbox mAP)
 #   keypoints    = Keypoint R-CNN (COCOeval keypoints / OKS)
 #   segmentation = Panoptic FPN via detectron2 (panoptic quality, PQ)
 tasks:
+  - features
   - detection
   - keypoints
   - segmentation
+
+# Low-level feature task (ORB): match ratio = good matches / clean keypoints.
+orb:
+  nfeatures: 800
+  distance_threshold: 64
 
 # Three corruptions chosen in the main README. Three severities each.
 distortions:

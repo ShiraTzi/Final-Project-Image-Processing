@@ -12,6 +12,7 @@ and runs in a dedicated venv.
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Dict, List, Tuple
 
 
@@ -45,8 +46,12 @@ def yolo_device(requested: str):
 # --------------------------------------------------------------------------- #
 # YOLOv8 object detector
 # --------------------------------------------------------------------------- #
+@lru_cache(maxsize=4)
 def get_yolo_model(weights: str = "yolov8n.pt"):
-    """Load a (pretrained or fine-tuned) YOLOv8 model."""
+    """Load a (pretrained or fine-tuned) YOLOv8 model.
+
+    Cached per weights path — the fine-tuned-eval loop calls this once per
+    distortion cell and must not re-deserialize the checkpoint every time."""
     from ultralytics import YOLO
 
     return YOLO(weights)

@@ -14,12 +14,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
 
 # allow running as a script (python scripts/run_pipeline.py)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config, ensure_dirs, variant_tag  # noqa: E402
+
+# Per-variant failures collected across stages: the run keeps going (one bad
+# variant shouldn't kill a long GPU job) but finishes with a summary + exit 1
+# so SLURM/batch wrappers don't report an incomplete run as success.
+FAILURES: list = []
 
 
 def _exists(path: Path, force: bool) -> bool:
@@ -66,7 +72,12 @@ def stage_infer(cfg, force):
             out = Path(cfg["paths"]["preds_dir"]) / f"{task}__{tag}.json"
             if _exists(out, force):
                 continue
-            run_inference(cfg, task, variant, dtype, severity)
+            try:
+                run_inference(cfg, task, variant, dtype, severity)
+            except Exception:  # noqa: BLE001 — keep the long run going
+                traceback.print_exc()
+                print(f"[infer] FAILED {task}/{tag}")
+                FAILURES.append(f"infer:{task}/{tag}")
 
 
 def stage_eval(cfg, force):
@@ -77,7 +88,12 @@ def stage_eval(cfg, force):
             out = Path(cfg["paths"]["metrics_dir"]) / f"{task}__{tag}.json"
             if _exists(out, force):
                 continue
-            evaluate(cfg, task, variant, dtype, severity)
+            try:
+                evaluate(cfg, task, variant, dtype, severity)
+            except Exception:  # noqa: BLE001 — one bad variant shouldn't abort the run
+                traceback.print_exc()
+                print(f"[eval] FAILED {task}/{tag}")
+                FAILURES.append(f"eval:{task}/{tag}")
 
 
 def stage_finetune(cfg, force):
@@ -87,15 +103,18 @@ def stage_finetune(cfg, force):
         ckpt = Path(cfg["_root"]) / ckpt
     if not _exists(ckpt, force):
         train(cfg)
-    evaluate_finetuned(cfg)
+    FAILURES.extend(evaluate_finetuned(cfg, force))
 
 
 def stage_report(cfg, force):
     from src.tables import build_tables
-    from src.visualize import plot_acc_vs_snr, plot_per_class_ap, plot_image_grids
+    from src.visualize import (
+        plot_acc_vs_snr, plot_per_class_ap, plot_per_class_comparison, plot_image_grids,
+    )
     build_tables(cfg)
     plot_acc_vs_snr(cfg)
     plot_per_class_ap(cfg)
+    plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
 
 
@@ -125,6 +144,13 @@ def main() -> None:
             continue
         print(f"\n=== stage: {name} ===")
         STAGES[name](cfg, args.force)
+
+    if FAILURES:
+        print(f"\n[pipeline] {len(FAILURES)} step(s) FAILED — report artifacts "
+              "may be incomplete:")
+        for f in FAILURES:
+            print(f"  - {f}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

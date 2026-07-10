@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "variant": "clean",
+  "PQ": 0.4,
+  "SQ": 0.7442,
+  "RQ": 0.489,
+  "PQ_things": 0.4707,
+  "PQ_stuff": 0.2946,
+  "n_images": 500
+}

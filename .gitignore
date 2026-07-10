@@ -17,16 +17,17 @@ env/
 .venv-det/
 
 # Project outputs / data (regenerated, not tracked)
+# results/metrics and results/figures ARE tracked — the README embeds them.
 data/coco/
 data/distorted/
 data/enhanced/
 results/preds/
-results/figures/
 models/*.pth
 models/*.pt
 yolo_work/
 runs/
 yolo*.pt
+slurm/logs/
 
 # VSCode
 .vscode/
