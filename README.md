@@ -83,9 +83,26 @@ metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 
 ### Clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
 
-`degradation` = distorted − clean; `recovery_*` = improved − distorted.
-Fine-tuning applies to the detection task only (the DL improvement); it was
-**trained on gauss_noise/high** and evaluated on **all** distorted cells.
+Each row is one experimental cell: the same model, the same 500 val images and
+ground truth — only the image quality changes. **How to read the columns:**
+
+- **SNR (dB)** — measured signal-to-noise ratio of the distorted images vs the
+  clean ones (lower = more corrupted).
+- **clean** — the task metric on the original images (the baseline; constant
+  per task). Metrics: detection = bbox mAP@[.5:.95], features = ORB match
+  ratio, keypoints = OKS AP, segmentation = PQ. All 0–1, higher is better.
+- **distorted** — the same metric on the corrupted images.
+- **enhanced** — the metric after the matched classical restoration (NLM for
+  Gaussian noise, median filter for salt & pepper, unsharp for motion blur).
+- **finetuned** — the metric of the fine-tuned YOLOv8n (detection only, the DL
+  improvement; **trained on gauss_noise/high**, evaluated on all cells).
+- **degradation** = distorted − clean (how much the corruption destroyed).
+- **recovery (enhance / finetune)** = improved − distorted (how much each
+  improvement strategy won back; negative = made it worse).
+
+Example — `salt_pepper/high`: clean mAP 0.363 collapses to 0.077 (−0.286);
+the median filter restores it to 0.288 (+0.211), the fine-tuned model to
+0.163 (+0.087). Bold marks the notable wins.
 
 | task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | degradation | recovery (enhance) | recovery (finetune) |
 |:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
