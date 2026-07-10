@@ -142,10 +142,16 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
     x = np.arange(len(names))
     group_w = 0.8
     width = group_w / len(per_class)
+    bar_colors = {"clean": INK_MUTED,
+                  **{v: st["color"] for v, st in VARIANT_STYLE.items()}}
     plt.figure(figsize=(14, 5))
     for i, (variant, pcl) in enumerate(per_class.items()):
         vals = [pcl.get(n, np.nan) for n in names]
-        plt.bar(x + i * width, vals, width, label=variant)
+        plt.bar(x + i * width, vals, width, label=variant, color=bar_colors[variant])
+        for xi, v in zip(x + i * width, vals):
+            if v == 0:   # measured zero, not missing data — make it visible
+                plt.text(xi, 0.004, "0", ha="center", va="bottom",
+                         fontsize=6, color=INK)
     plt.xticks(x + (group_w - width) / 2, names, rotation=45, ha="right", fontsize=8)
     plt.ylabel("AP@[.5:.95]")
     plt.title(f"Per-class AP — clean vs {dtype}/{sev} (distorted / enhanced / fine-tuned)")
