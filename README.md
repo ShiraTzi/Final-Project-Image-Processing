@@ -192,6 +192,24 @@ Input/output examples — clean / distorted (high severity) / enhanced:
 ![salt & pepper grid](results/figures/grid_salt_pepper.png)
 ![motion blur grid](results/figures/grid_motion_blur.png)
 
+### Validity: is the 500-image subset representative?
+
+The subset is a **seeded random sample**, and its class distribution matches
+full val2017 almost exactly (class-proportion correlation **r = 0.996**,
+3,509 GT instances over 500 images). The clean detection mAP (0.363) is within
+0.01 of YOLOv8n's published full-val2017 mAP (~0.373), and the keypoints task
+rests on 1,018 person instances — so the **aggregate** numbers and all
+**paired deltas** (same images and GT across every variant) are trustworthy.
+
+Known limits, called out for honesty:
+- 1 of 80 classes (`toaster`) has zero instances in the subset and is simply
+  excluded from mAP; 5 classes have fewer than 10 instances (parking meter 2,
+  scissors 3, hair drier 4, hot dog 5, microwave 7).
+- **Per-class** AP for those rare classes is a high-variance estimate — e.g.
+  the striking microwave recovery (0.00 → 0.47 after fine-tuning) is based on
+  only 7 objects. The per-class figure therefore shows the subset GT count
+  (n=) under each class name; read small-n bars as direction, not magnitude.
+
 ### Fine-tuning setup (Phase 4)
 
 - Data: 1,500-image train2017 subset, distorted with **gauss_noise/high**

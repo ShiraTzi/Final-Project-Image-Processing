@@ -139,6 +139,17 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
     top = sorted(((v, k) for k, v in per_class["clean"].items() if not np.isnan(v)),
                  reverse=True)[:top_n]
     names = [k for _, k in top]
+
+    # GT instance counts in the subset — rare classes have high-variance AP,
+    # so show n= under each class name.
+    from src.data import get_coco, load_subset_ids
+    coco = get_coco(cfg["dataset"]["ann_instances_val"])
+    subset_ids = set(load_subset_ids(cfg["dataset"]["val_subset_file"]))
+    name2id = {c["name"]: c["id"] for c in coco.loadCats(coco.getCatIds())}
+    gt_n = {n: sum(1 for a in coco.loadAnns(coco.getAnnIds(catIds=[name2id[n]],
+                                                            iscrowd=False))
+                   if a["image_id"] in subset_ids) for n in names}
+    tick_labels = [f"{n}\n(n={gt_n[n]})" for n in names]
     x = np.arange(len(names))
     group_w = 0.8
     width = group_w / len(per_class)
@@ -152,7 +163,8 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
             if v == 0:   # measured zero, not missing data — make it visible
                 plt.text(xi, 0.004, "0", ha="center", va="bottom",
                          fontsize=6, color=INK)
-    plt.xticks(x + (group_w - width) / 2, names, rotation=45, ha="right", fontsize=8)
+    plt.xticks(x + (group_w - width) / 2, tick_labels, rotation=45, ha="right",
+               fontsize=8)
     plt.ylabel("AP@[.5:.95]")
     plt.title(f"Per-class AP — clean vs {dtype}/{sev} (distorted / enhanced / fine-tuned)")
     plt.legend()
