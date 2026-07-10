@@ -29,8 +29,22 @@ def _figdir(cfg: Dict) -> Path:
     return d
 
 
+# Variant identity is fixed across every panel and figure: same color, marker,
+# and linestyle everywhere (validated categorical slots 1-3; marker + linestyle
+# double-encode identity so color never carries it alone).
+VARIANT_STYLE = {
+    "distorted": {"color": "#2a78d6", "marker": "o", "ls": "-"},
+    "enhanced":  {"color": "#1baf7a", "marker": "s", "ls": "--"},
+    "finetuned": {"color": "#eda100", "marker": "^", "ls": ":"},
+}
+INK = "#52514e"        # secondary ink: axis titles
+INK_MUTED = "#898781"  # muted ink: ticks, baseline
+GRID = "#e1e0d9"       # hairline grid
+
+
 def plot_acc_vs_snr(cfg: Dict) -> None:
-    """One figure per task: metric vs SNR, one line per distortion, distorted vs enhanced."""
+    """One figure per task, one panel per distortion: metric vs SNR with
+    distorted / enhanced / finetuned as fixed-identity series."""
     long_path = Path(cfg["paths"]["metrics_dir"]) / "summary_long.csv"
     if not long_path.exists():
         print("[viz] no summary_long.csv; run tables first")
@@ -41,27 +55,37 @@ def plot_acc_vs_snr(cfg: Dict) -> None:
     for task in df["task"].unique():
         sub = df[df["task"] == task]
         clean_val = sub[sub["variant"] == "clean"]["value"]
-        plt.figure(figsize=(9, 5))
-        for dist in sorted(sub["distortion"].dropna().unique()):
-            for variant, style in [("distorted", "-o"), ("enhanced", "--s"), ("finetuned", ":^")]:
+        dists = sorted(sub["distortion"].dropna().unique())
+        if not dists:
+            continue
+        fig, axes = plt.subplots(1, len(dists), figsize=(4.4 * len(dists), 4.2),
+                                 sharey=True)
+        axes = [axes] if len(dists) == 1 else list(axes)
+        for ax, dist in zip(axes, dists):
+            for variant, st in VARIANT_STYLE.items():
                 d = sub[(sub["distortion"] == dist) & (sub["variant"] == variant)]
                 d = d.dropna(subset=["snr_db"]).sort_values("snr_db")
                 if d.empty:
                     continue
-                plt.plot(d["snr_db"], d["value"], style, label=f"{dist} ({variant})")
-        if not clean_val.empty:
-            plt.axhline(float(clean_val.iloc[0]), color="k", ls="--", alpha=0.6,
-                        label=f"clean baseline = {float(clean_val.iloc[0]):.3f}")
-        plt.gca().invert_xaxis()   # lower SNR = more distortion, to the right
-        plt.xlabel("SNR (dB)  <- more distortion")
-        plt.ylabel(sub["metric"].iloc[0])
-        plt.title(f"{task}: performance vs SNR")
-        plt.legend(fontsize=8)
-        plt.grid(True, alpha=0.3)
+                ax.plot(d["snr_db"], d["value"], color=st["color"], ls=st["ls"],
+                        marker=st["marker"], ms=7, lw=2, label=variant)
+            if not clean_val.empty:
+                ax.axhline(float(clean_val.iloc[0]), color=INK_MUTED, ls="--",
+                           lw=1.5, label=f"clean = {float(clean_val.iloc[0]):.3f}")
+            ax.invert_xaxis()   # lower SNR = more distortion, to the right
+            ax.set_title(dist, fontsize=11, color=INK)
+            ax.set_xlabel("SNR (dB)  <- more distortion", fontsize=9, color=INK)
+            ax.grid(True, color=GRID, lw=0.8)
+            ax.tick_params(colors=INK_MUTED, labelsize=8)
+            for spine in ax.spines.values():
+                spine.set_color(GRID)
+        axes[0].set_ylabel(sub["metric"].iloc[0], fontsize=10, color=INK)
+        axes[0].legend(fontsize=8, loc="lower left")   # identity is shared -> one legend
+        fig.suptitle(f"{task}: performance vs SNR", fontsize=12)
         out = figdir / f"acc_vs_snr_{task}.png"
-        plt.tight_layout()
-        plt.savefig(out, dpi=120)
-        plt.close()
+        fig.tight_layout()
+        fig.savefig(out, dpi=120)
+        plt.close(fig)
         print(f"[viz] {out}")
 
 

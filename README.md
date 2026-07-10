@@ -151,8 +151,12 @@ Fine-tuning applies to the detection task only (the DL improvement); it was
 
 ### Figures
 
-Performance vs SNR (one line per distortion; distorted solid, enhanced dashed,
-fine-tuned dotted; clean baseline as horizontal line):
+Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
+fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
+fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. This
+makes the fine-tuning effect directly readable per corruption: in gauss_noise
+the fine-tuned line stays nearly flat and crosses above the others as distortion
+grows, while in motion_blur it sits below the distorted line (negative transfer):
 
 ![detection vs SNR](results/figures/acc_vs_snr_detection.png)
 ![features vs SNR](results/figures/acc_vs_snr_features.png)
