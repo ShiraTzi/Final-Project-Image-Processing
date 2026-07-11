@@ -110,7 +110,7 @@ def stage_report(cfg, force):
     from src.tables import build_tables
     from src.visualize import (
         plot_acc_vs_snr, plot_recovery_bars, plot_per_class_ap,
-        plot_per_class_comparison, plot_image_grids,
+        plot_per_class_comparison, plot_image_grids, plot_annotated_grids,
     )
     build_tables(cfg)
     plot_acc_vs_snr(cfg)
@@ -118,6 +118,7 @@ def stage_report(cfg, force):
     plot_per_class_ap(cfg)
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
+    plot_annotated_grids(cfg)
 
 
 STAGES = {

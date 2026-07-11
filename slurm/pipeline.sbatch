@@ -2,6 +2,7 @@
 #SBATCH --job-name=coco_robust
 #SBATCH --output=slurm/logs/pipeline_%j.out
 #SBATCH --error=slurm/logs/pipeline_%j.err
+#SBATCH --partition=L4-12h
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G

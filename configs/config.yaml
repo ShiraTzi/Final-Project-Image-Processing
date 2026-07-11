@@ -30,7 +30,9 @@ dataset:
   # least this many GT instances (bounded by its availability in val2017).
   # Fixes high-variance per-class AP for rare classes (e.g. microwave n=7).
   val_min_class_instances: 20
-  train_subset_size: 1500             # train2017 subset for fine-tuning (real GT)
+  train_subset_size: 4500             # train2017 subset for fine-tuning (real GT);
+                                      # the mixture spreads it over 10 variants, so
+                                      # each cell still gets ~450 images
   val_subset_file: data/splits/val_subset.json
   train_subset_file: data/splits/train_subset.json
 
@@ -87,11 +89,18 @@ segmentation:
   score_threshold: 0.5
 
 finetune:
-  # fine-tune YOLOv8 on distorted train2017 with real COCO GT (converted to YOLO labels)
-  epochs: 20
+  # fine-tune YOLOv8 on corrupted train2017 with real COCO GT (converted to YOLO
+  # labels). Training data is a per-image seeded MIXTURE of clean + all
+  # distortion cells — single-corruption training measurably negative-transfers
+  # to every other cell (it hurt all motion-blur and low-severity cells).
+  epochs: 30
   batch_size: 16
   imgsz: 640
+  lr0: 1.0e-4                         # AdamW, pinned (optimizer=auto silently overrides lr0)
+  patience: 10
+  val_fraction: 0.1                   # held-out split of the TRAIN subset for best.pt selection
   workdir: yolo_work                  # YOLO dataset (images/ + labels/ + data.yaml)
-  distortion: gauss_noise             # which distortion/severity of train2017 to fine-tune on
+  # showcase cell for per-class figures (training itself uses the mixture)
+  distortion: gauss_noise
   severity: high
   checkpoint: models/yolov8_finetuned.pt

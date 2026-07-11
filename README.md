@@ -1,5 +1,7 @@
 # Final-Project-Image-Processing
 
+**Team:** Yonatan Haba · Shira Tziony
+
 Robustness benchmark for image-processing / vision methods under image
 distortion, on the **COCO** dataset. For each task we measure a **clean
 baseline**, the **degradation** under three corruptions at multiple severities,
@@ -20,7 +22,7 @@ runnable entry point (see [How to run each phase](#how-to-run-each-phase)).
 | **1 — Clean baseline** | run all models on clean images, compute baseline metrics | `--only infer eval` (clean) |
 | **2 — Distortion** | generate distorted images (3 corruptions × 3 severities) + SNR; measure degradation | `src.distortions` → infer → eval |
 | **3 — Enhancement** | restore distorted images (matched denoise/deblur); measure recovery | `src.enhancement` → infer → eval |
-| **4 — Fine-tuning** | fine-tune YOLOv8 on distorted data (real GT); re-evaluate | `src.finetune_det` |
+| **4 — Fine-tuning** | fine-tune YOLOv8 on a clean+distorted mixture (real GT); re-evaluate on clean/distorted/enhanced | `src.finetune_det` |
 | **5 — Report** | comparison tables, per-class plots, accuracy-vs-SNR curves | `src.tables`, `src.visualize` |
 
 ```
@@ -72,14 +74,20 @@ higher is better):
 
 ## Distortions
 Three corruptions (main-branch choice), each at **3 severities** (low/med/high),
-applied to the fixed subset; deterministic per image (numpy/cv2). SNR (dB) is
-recorded per image in `results/metrics/snr_index.csv`.
+applied to the fixed subset; deterministic per image (numpy/cv2, seeded via a
+stable CRC32 digest so every rerun and every process reproduces the identical
+corruption). Distorted and enhanced images are stored as **lossless PNG** — a
+JPEG round-trip would re-shape the corruption itself (it partially denoises
+Gaussian noise and smears salt-and-pepper impulses). Per image,
+`results/metrics/snr_index.csv` records the SNR (dB) **and the exact sampled
+degradation parameters** (noise variance / impulse fraction / blur kernel size
+and angle) — the logged parameters are what make non-blind restoration possible.
 
 | Distortion | Models | Matched enhancement (Phase 3) |
 |---|---|---|
-| **Gaussian noise** | sensor / intensity noise | Non-Local Means + bilateral |
+| **Gaussian noise** | sensor / intensity noise | sigma-adaptive Non-Local Means (strength follows the estimated noise level) |
 | **Salt-and-pepper** | impulsive pixel corruption | median filter |
-| **Motion blur** | camera shake / object motion | unsharp masking (deblur proxy) |
+| **Motion blur** | camera shake / object motion | non-blind Wiener deconvolution with the logged blur kernel |
 
 ## Dataset
 COCO **val2017**, a **fixed seeded subset of ~1500 images** (single source of
@@ -344,7 +352,6 @@ Sanity checks (run on a **GPU node** for the `cuda` checks):
 .venv/bin/python      -c "import torch,torchvision,cv2,ultralytics,pycocotools; print(torch.cuda.is_available())"
 .venv-det/bin/python  -c "import torch,detectron2; from panopticapi.evaluation import pq_compute; print(torch.cuda.is_available())"
 ```
-> The committed `venv.zip` is a Windows env and is **not** used on Linux.
 > The detectron2 env builds from source; for GPU support build it on a node that
 > has the CUDA toolkit (`nvcc`).
 
@@ -430,6 +437,8 @@ scripts/run_pipeline.py    # resumable orchestrator over all phases
 slurm/                     # pipeline / inference / finetune sbatch jobs
 results/{preds,metrics,figures}/   # generated outputs
 data/                      # coco/ images+annotations, distorted/, enhanced/ (gitignored)
+docs/                      # archived v1 result tables + the course reference pipeline
+slides/                    # final presentation (PPTX + PDF)
 ```
 
 ## Configuration
@@ -454,19 +463,43 @@ All knobs live in [configs/config.yaml](configs/config.yaml):
   keypoints; clean vs clean = 1.0 by construction.
 - **Detection** (YOLOv8): COCOeval **bbox mAP**, mAP@.50, mAP@.75, per-class AP, small/med/large.
 - **Keypoints** (Keypoint R-CNN): COCOeval **keypoints** (OKS) AP.
-- **Segmentation** (Panoptic FPN): **PQ / SQ / RQ** via panopticapi (things & stuff).
+- **Segmentation** (Panoptic FPN): **PQ / SQ / RQ** via panopticapi (things & stuff),
+  plus the PQ_things / PQ_stuff split per cell.
 - Tables report **degradation** (distorted − clean) and **recovery** (enhanced/fine-tuned − distorted).
 
+> **Metric caveat (ORB match ratio).** The features score measures similarity
+> to the *clean image's* ORB features, not task utility: any enhancement that
+> alters texture — smoothing in particular — is penalized *by construction*,
+> even when the same enhanced images improve every GT-scored task. (Salt &
+> pepper shows this cleanly: the median-filtered images improve detection,
+> keypoints and segmentation, while their ORB score stays well below the
+> clean-reference 1.0.) Its clean baseline of exactly 1.0 is also "free", so
+> degradation magnitudes are not directly comparable with the GT-based tasks.
+> Cross-task conclusions in this report therefore lean on the three GT-based
+> metrics; ORB answers the narrower low-level question "does the raw signal
+> still carry the same local structure?"
+
 ## How fine-tuning works
-`src/finetune_det.py` distorts the train2017 subset on the fly, writes the
-**real** COCO boxes as YOLO labels, and continues training the **pretrained**
-`yolov8n.pt` on that data (transfer learning — same architecture, updated
-weights). The result is saved separately as `models/yolov8_finetuned.pt`
-(the clean baseline model is untouched) and evaluated on **all nine** distorted
-val cells (held out — no leakage), so the comparison table shows both in-domain
-recovery and cross-distortion generalization. yolov8n is tiny and starts
-pretrained, so this is light (~6 minutes on one L4 GPU). Tune via
-`finetune.epochs`, `imgsz`, `dataset.train_subset_size`.
+`src/finetune_det.py` corrupts the train2017 subset on the fly with a
+**per-image seeded mixture** of clean + all 9 (distortion × severity) cells,
+writes the **real** COCO boxes as YOLO labels, and continues training the
+**pretrained** `yolov8n.pt` on that data (AdamW, lr0 pinned to 1e-4, cosine
+schedule — `optimizer=auto` silently overrides lr0, so it is set explicitly).
+A seeded 10% split of the *train* subset is held out as the YOLO val set so
+best-checkpoint selection is honest (selecting on the training images selects
+for memorization). The result is saved separately as
+`models/yolov8_finetuned.pt` (the clean baseline model is untouched) and
+evaluated on the **clean** val subset (does robustness cost clean accuracy?),
+all **nine distorted** val cells, and all **nine enhanced** val cells (is
+classical restoration on top of fine-tuning additive?) — all held out, the
+model never sees a val2017 image during training.
+
+Why the mixture matters: an earlier iteration fine-tuned on a *single* cell
+(gauss_noise/high only) and showed textbook graded negative transfer — it more
+than doubled in-domain mAP but *lost* to the pretrained model on every
+motion-blur cell and every low-severity cell (recovery −0.02…−0.10; archived
+in [docs/archive/](docs/archive/)). Training on the mixture keeps every
+evaluation cell in-domain.
 
 ---
 

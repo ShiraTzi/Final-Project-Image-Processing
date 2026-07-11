@@ -32,10 +32,14 @@ def _mean_snr_lookup(cfg: Dict) -> Dict:
 
 
 def _parse_tag(tag: str):
-    """clean | <variant>__<dtype>__<severity> -> (variant, dtype, severity)."""
+    """clean | <variant>__clean | <variant>__<dtype>__<severity>
+    -> (variant, dtype, severity)."""
     if tag == "clean":
         return "clean", None, None
     parts = tag.split("__")
+    if len(parts) == 2 and parts[1] == "clean":
+        # e.g. finetuned__clean: fine-tuned model evaluated on clean images
+        return f"{parts[0]}_clean", None, None
     return parts[0], parts[1], parts[2]
 
 
@@ -68,10 +72,16 @@ def build_tables(cfg: Dict) -> None:
     long_df.to_csv(long_path, index=False)
     print(f"[tables] wrote {long_path} ({len(long_df)} rows)")
 
-    # Wide comparison: clean baseline vs distorted vs enhanced, with deltas.
+    # Wide comparison: clean baseline vs distorted vs enhanced (+ finetuned on
+    # distorted, and finetuned on enhanced = the two repairs stacked).
     comp_rows = []
     clean_by_task = {r["task"]: r["value"] for r in rows if r["variant"] == "clean"}
-    for (task, dtype, severity), grp in long_df[long_df["variant"] != "clean"].groupby(
+    ft_clean = {r["task"]: r["value"] for r in rows if r["variant"] == "finetuned_clean"}
+    if ft_clean:
+        print(f"[tables] finetuned-on-clean: {ft_clean} "
+              f"(pretrained clean: {clean_by_task})")
+    cell_df = long_df[~long_df["variant"].isin(["clean", "finetuned_clean"])]
+    for (task, dtype, severity), grp in cell_df.groupby(
         ["task", "distortion", "severity"], dropna=False
     ):
         by_variant = grp.set_index("variant")["value"].to_dict()
@@ -79,13 +89,16 @@ def build_tables(cfg: Dict) -> None:
         dist_v = by_variant.get("distorted")
         enh_v = by_variant.get("enhanced")
         ft_v = by_variant.get("finetuned")
+        ft_enh_v = by_variant.get("finetuned_enh")
         comp_rows.append({
             "task": task, "distortion": dtype, "severity": severity,
             "snr_db": grp["snr_db"].iloc[0],
-            "clean": clean_v, "distorted": dist_v, "enhanced": enh_v, "finetuned": ft_v,
+            "clean": clean_v, "distorted": dist_v, "enhanced": enh_v,
+            "finetuned": ft_v, "finetuned_enh": ft_enh_v,
             "degradation": _delta(clean_v, dist_v),       # distorted - clean (negative = worse)
             "recovery_enhance": _delta(dist_v, enh_v),    # enhanced - distorted
             "recovery_finetune": _delta(dist_v, ft_v),    # finetuned - distorted
+            "recovery_combined": _delta(dist_v, ft_enh_v),  # both repairs - distorted
         })
     comp_df = pd.DataFrame(comp_rows).sort_values(["task", "distortion", "severity"])
     comp_df.to_csv(metrics_dir / "comparison.csv", index=False)

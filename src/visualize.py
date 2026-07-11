@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from src.config import load_config, variant_image_dir, variant_tag
+from src.config import load_config, resolve_image_path, variant_image_dir, variant_tag
 
 
 def _figdir(cfg: Dict) -> Path:
@@ -263,7 +263,7 @@ def plot_image_grids(cfg: Dict, n: int = 4) -> None:
                  ("enhanced", "Enhanced")]
             ):
                 d = variant_image_dir(cfg, variant, dist, sev)
-                p = d / fname
+                p = resolve_image_path(d, fname)
                 if p.exists():
                     axes[row, col].imshow(Image.open(p).convert("RGB"))
                 axes[row, col].axis("off")
@@ -273,6 +273,97 @@ def plot_image_grids(cfg: Dict, n: int = 4) -> None:
         plt.tight_layout()
         plt.savefig(out, dpi=110)
         plt.close()
+        print(f"[viz] {out}")
+
+
+def plot_annotated_grids(cfg: Dict, n: int = 3, score_thr: float = 0.35) -> None:
+    """Model predictions drawn on the images ("image with annotation"):
+    ground-truth boxes in gray + detector boxes with class/score, for
+    clean / distorted / enhanced (pretrained YOLO) and distorted (fine-tuned),
+    one figure per distortion at its highest severity.  Pure drawing from the
+    existing prediction JSONs — no model inference needed."""
+    import matplotlib.patches as mpatches
+    from src.data import get_coco, load_subset_ids
+
+    ds = cfg["dataset"]
+    if not Path(ds["val_subset_file"]).exists():
+        print("[viz] no val subset yet; skipping annotated grids")
+        return
+    coco = get_coco(ds["ann_instances_val"])
+    cat_names = {c["id"]: c["name"] for c in coco.loadCats(coco.getCatIds())}
+    preds_dir = Path(cfg["paths"]["preds_dir"])
+    figdir = _figdir(cfg)
+
+    # pick the first n subset images with a healthy number of GT objects
+    ids = [i for i in load_subset_ids(ds["val_subset_file"])
+           if 3 <= len(coco.getAnnIds(imgIds=i, iscrowd=False)) <= 12][:n]
+    if not ids:
+        print("[viz] no suitable images for annotated grids")
+        return
+
+    def _load_preds(tag):
+        p = preds_dir / f"detection__{tag}.json"
+        if not p.exists():
+            return None
+        by_img: Dict[int, list] = {}
+        with open(p) as f:
+            for d in json.load(f):
+                if d["score"] >= score_thr:
+                    by_img.setdefault(d["image_id"], []).append(d)
+        return by_img
+
+    def _draw(ax, img_path, gt_anns, preds, color):
+        ax.imshow(Image.open(img_path).convert("RGB"))
+        for a in gt_anns:                                   # GT: gray, dashed
+            x, y, w, h = a["bbox"]
+            ax.add_patch(mpatches.Rectangle((x, y), w, h, fill=False,
+                                            edgecolor=INK_MUTED, ls="--", lw=1.2))
+        for d in preds or []:                               # predictions: variant color
+            x, y, w, h = d["bbox"]
+            ax.add_patch(mpatches.Rectangle((x, y), w, h, fill=False,
+                                            edgecolor=color, lw=1.6))
+            ax.text(x, max(y - 3, 0),
+                    f"{cat_names.get(d['category_id'], '?')} {d['score']:.2f}",
+                    fontsize=6, color="white",
+                    bbox=dict(facecolor=color, pad=0.5, edgecolor="none"))
+        ax.axis("off")
+
+    clean_preds = _load_preds("clean")
+    for dist, spec in cfg["distortions"].items():
+        sev = list(spec["severities"])[-1]                   # highest severity
+        cols = [
+            ("clean", "clean", None, "Clean + YOLO", VARIANT_STYLE["distorted"]["color"]),
+            ("distorted", "distorted", dist, f"Distorted ({dist}/{sev})",
+             VARIANT_STYLE["distorted"]["color"]),
+            ("enhanced", "enhanced", dist, "Enhanced", VARIANT_STYLE["enhanced"]["color"]),
+            ("finetuned", "distorted", dist, "Distorted + fine-tuned YOLO",
+             VARIANT_STYLE["finetuned"]["color"]),
+        ]
+        preds_by_col = {}
+        for variant, _, d, _, _ in cols:
+            tag = "clean" if variant == "clean" else variant_tag(variant, dist, sev)
+            preds_by_col[variant] = clean_preds if variant == "clean" else _load_preds(tag)
+        if preds_by_col["distorted"] is None:
+            continue
+        fig, axes = plt.subplots(len(ids), len(cols),
+                                 figsize=(4.0 * len(cols), 3.1 * len(ids)))
+        axes = axes[None, :] if len(ids) == 1 else axes
+        for row, image_id in enumerate(ids):
+            im = coco.loadImgs(image_id)[0]
+            gt = coco.loadAnns(coco.getAnnIds(imgIds=image_id, iscrowd=False))
+            for col, (variant, img_variant, d, title, color) in enumerate(cols):
+                img_dir = variant_image_dir(cfg, img_variant, d, sev if d else None)
+                path = resolve_image_path(img_dir, im["file_name"])
+                preds = (preds_by_col[variant] or {}).get(image_id, [])
+                _draw(axes[row, col], path, gt, preds, color)
+                if row == 0:
+                    axes[row, col].set_title(title, fontsize=10, color=INK)
+        fig.suptitle(f"Detections on {dist}/{sev} — gray dashed = ground truth, "
+                     f"solid = YOLO predictions (score ≥ {score_thr})", fontsize=11)
+        out = figdir / f"annotated_{dist}.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=110)
+        plt.close(fig)
         print(f"[viz] {out}")
 
 
@@ -286,6 +377,7 @@ def main() -> None:
     plot_per_class_ap(cfg)
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
+    plot_annotated_grids(cfg)
 
 
 if __name__ == "__main__":

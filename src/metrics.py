@@ -20,7 +20,9 @@ from typing import Dict, List
 
 import numpy as np
 
-from src.config import load_config, ensure_dirs, variant_image_dir, variant_tag
+from src.config import (
+    load_config, ensure_dirs, resolve_image_path, variant_image_dir, variant_tag,
+)
 from src.data import get_coco, load_subset_ids
 
 
@@ -152,9 +154,10 @@ def evaluate_features(cfg: Dict, variant: str, dtype=None, severity=None) -> Dic
     ratios = []
     n_skipped = 0
     for im in tqdm(coco.loadImgs(img_ids), desc="features", leave=False):
-        var = cv2.imread(str(var_dir / im["file_name"]), cv2.IMREAD_GRAYSCALE)
+        var_path = resolve_image_path(var_dir, im["file_name"])
+        var = cv2.imread(str(var_path), cv2.IMREAD_GRAYSCALE)
         if var is None:
-            raise FileNotFoundError(f"unreadable variant image: {var_dir / im['file_name']}")
+            raise FileNotFoundError(f"unreadable variant image: {var_path}")
         n_clean_kps, desc1 = _clean_orb_descriptors(str(clean_dir / im["file_name"]), nfeatures)
         if desc1 is None or n_clean_kps == 0:
             n_skipped += 1          # no clean features -> ratio undefined (0/0), skip

@@ -37,15 +37,18 @@ def variant_image_dir(cfg: Dict[str, Any], variant: str, dtype: str | None = Non
                        severity: str | None = None) -> Path:
     """Return the image directory for a given variant.
 
-    variant ∈ {"clean", "distorted", "enhanced"}.
-    For distorted/enhanced, ``dtype`` and ``severity`` are required.
+    variant ∈ {"clean", "distorted", "enhanced", "finetuned", "finetuned_enh"}.
+      - "finetuned"     = fine-tuned detector on the distorted images
+                          (or on the clean images when dtype is None).
+      - "finetuned_enh" = fine-tuned detector on the enhanced images
+                          (are the two repairs additive?).
+    For distorted/enhanced cells, ``dtype`` and ``severity`` are required.
     """
-    if variant == "clean":
+    if variant == "clean" or (variant == "finetuned" and dtype is None):
         return Path(cfg["paths"]["coco_root"]) / cfg["dataset"]["val_split"]
     if variant in ("distorted", "finetuned"):
-        # "finetuned" = fine-tuned detector evaluated on the distorted images.
         return Path(cfg["paths"]["distorted_root"]) / dtype / severity
-    if variant == "enhanced":
+    if variant in ("enhanced", "finetuned_enh"):
         return Path(cfg["paths"]["enhanced_root"]) / dtype / severity
     raise ValueError(f"unknown variant: {variant}")
 
@@ -54,7 +57,26 @@ def variant_tag(variant: str, dtype: str | None = None, severity: str | None = N
     """Stable short tag used in prediction/metric filenames."""
     if variant == "clean":
         return "clean"
+    if variant == "finetuned" and dtype is None:
+        return "finetuned__clean"
     return f"{variant}__{dtype}__{severity}"
+
+
+def variant_image_name(file_name: str) -> str:
+    """Distorted/enhanced sets store the COCO ``file_name`` as lossless PNG
+    (a JPEG round-trip would alter the distortion itself)."""
+    return str(Path(file_name).with_suffix(".png"))
+
+
+def resolve_image_path(img_dir: Path, file_name: str) -> Path:
+    """Resolve a COCO ``file_name`` inside a variant dir: clean dirs keep the
+    original .jpg, distorted/enhanced dirs store .png. Prefers whichever
+    exists; falls back to the original name (so error messages stay honest)."""
+    p = Path(img_dir) / file_name
+    if p.exists():
+        return p
+    alt = p.with_suffix(".png")
+    return alt if alt.exists() else p
 
 
 def ensure_dirs(cfg: Dict[str, Any]) -> None:

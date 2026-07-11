@@ -24,6 +24,8 @@ data/enhanced/
 results/preds/
 models/*.pth
 models/*.pt
+# ...but the fine-tuned checkpoint is a named course deliverable — keep it.
+!models/yolov8_finetuned.pt
 yolo_work/
 runs/
 yolo*.pt

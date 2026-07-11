@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.config import load_config, variant_image_dir, variant_tag
+from src.config import load_config, resolve_image_path, variant_image_dir, variant_tag
 
 
 def _subset_ids(path: str):
@@ -98,7 +98,7 @@ def run(cfg, variant, dtype=None, severity=None) -> dict:
     from tqdm import tqdm
     for image_id in tqdm(img_ids, desc=f"panoptic/{tag}", leave=False):
         jpg = id2jpg[image_id]
-        img = cv2.imread(str(img_dir / jpg))                  # BGR, as detectron2 expects
+        img = cv2.imread(str(resolve_image_path(img_dir, jpg)))   # BGR, as detectron2 expects
         if img is None:
             continue
         panoptic_seg, segments_info = predictor(img)["panoptic_seg"]
