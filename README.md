@@ -40,6 +40,32 @@ Four tasks spanning low-level and high-level vision:
 | Keypoint detection | **Keypoint R-CNN** ResNet50-FPN (COCO-pretrained) | torchvision | COCOeval keypoints (OKS) |
 | Panoptic segmentation | **Panoptic FPN** R50 (COCO-pretrained) | detectron2 | Panoptic Quality (PQ/SQ/RQ) |
 
+**What each task does, and how to read its metric** (all metrics are 0–1,
+higher is better):
+
+- **Feature matching (ORB)** — the low-level question: does the raw *signal*
+  still carry the same local structure? ORB detects corner-like keypoints with
+  binary descriptors on the clean image and on the degraded/restored one; the
+  **match ratio** is the fraction of clean keypoints that find a good match
+  (Hamming distance ≤ 64, cross-checked) in the other image. 1.0 = every clean
+  feature survives; 0 = local structure destroyed. Needs no ground truth — the
+  clean image itself is the reference.
+- **Object detection (YOLOv8n)** — find every object and its bounding box.
+  Scored with COCO **mAP@[.5:.95]**: average precision, averaged over 10 IoU
+  thresholds (0.50…0.95) and over the 80 classes. Deliberately strict — it
+  rewards both *finding* the object and localizing it *tightly*, so it reacts
+  to corruption earlier than a loose "did we detect something" measure.
+- **Keypoint detection (Keypoint R-CNN)** — locate 17 human body joints per
+  person. Scored with **OKS AP**: the same AP machinery, but box-IoU is
+  replaced by Object Keypoint Similarity — a scale-normalized distance between
+  predicted and true joints. Person-only, so it isolates how corruption
+  affects *fine* spatial localization.
+- **Panoptic segmentation (Panoptic FPN)** — assign every pixel a class and an
+  instance id ("things" like cars *and* "stuff" like sky/road). Scored with
+  **PQ = SQ × RQ**: RQ (recognition quality) is the F1 of correctly matched
+  segments, SQ (segmentation quality) is the mean IoU of the matched ones — so
+  PQ drops both when whole segments are missed and when masks get sloppy.
+
 > Object detection is fine-tuned (Phase 4) as the deep-learning improvement.
 > Panoptic FPN runs in a **separate virtualenv** (detectron2 needs a different
 > torch) — the pipeline calls it as a subprocess; everything else is automatic.
@@ -77,6 +103,47 @@ table: [results/metrics/comparison.md](results/metrics/comparison.md) /
 [`comparison.csv`](results/metrics/comparison.csv); long format with every
 metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 
+### The headline: two repair strategies, and each wins somewhere else
+
+The project's main result in one figure — **recovery** (improved − distorted)
+for every distortion × severity cell, one panel per task. Bars above zero mean
+the repair helped. Classical enhancement (green) rescues impulse noise for
+*every* task and gets stronger as the corruption gets worse; fine-tuning
+(amber, detection only) rescues heavy Gaussian noise; **nothing repairs motion
+blur**:
+
+![recovery per cell](results/figures/recovery_bars.png)
+
+The same story per object class, on the fine-tuning cell (gauss_noise/high):
+the fine-tuned detector (amber) beats the distorted model (blue) on **every**
+class and recovers most of the clean AP (gray) — e.g. `bus` 0.07 → 0.42,
+`microwave` 0.11 → 0.44 — while classical denoising (green) recovers far less:
+
+![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
+
+### Key findings
+
+- **Degradation tracks SNR monotonically for every task** — each severity step
+  lowers SNR and performance together (see the per-SNR curves below).
+  Motion blur is the most destructive corruption for localization-heavy tasks
+  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is higher
+  than the noise corruptions' — SNR alone does not fully predict task damage.
+- **Classical enhancement is corruption-specific.** The median filter
+  essentially rescues salt-and-pepper for every task (e.g. detection
+  0.073 → 0.274, PQ 0.107 → 0.309, ORB 0.331 → 0.648 at high severity).
+  NLM denoising barely helps (and slightly hurts low-severity cells) because it
+  smooths away the textures/corners the models and ORB rely on; unsharp masking
+  cannot undo motion blur (a genuine deconvolution problem).
+- **Fine-tuning recovers in-domain and transfers within the corruption family.**
+  Trained only on gauss_noise/high, YOLOv8n more than doubles its mAP on that
+  cell (0.091 → 0.202) and improves the other noise-like cells
+  (salt_pepper/high +0.076, gauss_noise/med +0.042), but *hurts* motion-blur
+  cells — fine-tuning on one corruption does not buy robustness to a different
+  corruption family.
+- **Enhancement and fine-tuning are complementary:** enhancement wins where the
+  corruption is classically invertible (impulse noise), fine-tuning wins where
+  it is not (heavy Gaussian noise).
+
 ### Clean baselines (Phase 1)
 
 | Task | Metric | Clean baseline |
@@ -86,7 +153,30 @@ metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 | Keypoint detection (Keypoint R-CNN) | OKS AP | 0.657 |
 | Panoptic segmentation (Panoptic FPN) | PQ | 0.410 (SQ 0.775 / RQ 0.500) |
 
-### Clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
+All three pretrained models land within ~0.02 of their published full-val2017
+scores, which validates the measurement pipeline itself (GT handling, format
+conversions, COCOeval) before any distortion enters the picture.
+
+### Degradation per SNR (Phase 2)
+
+Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
+fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
+fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. In
+gauss_noise the fine-tuned line stays nearly flat and crosses above the others
+as distortion grows, while in motion_blur it sits below the distorted line
+(negative transfer):
+
+![detection vs SNR](results/figures/acc_vs_snr_detection.png)
+![features vs SNR](results/figures/acc_vs_snr_features.png)
+![keypoints vs SNR](results/figures/acc_vs_snr_keypoints.png)
+![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
+
+Per-class AP of the clean detection baseline (strongest classes, with subset
+GT counts):
+
+![per-class AP clean](results/figures/per_class_ap_clean.png)
+
+### The full numbers — clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
 
 Each row is one experimental cell: the same model, the same 1,521 val images
 and ground truth — only the image quality changes. **How to read the columns:**
@@ -148,56 +238,12 @@ the median filter restores it to 0.274 (+0.202), the fine-tuned model to
 | segmentation | motion_blur | med | 17.7 | 0.410 | 0.230 | 0.229 | — | −0.179 | −0.001 | — |
 | segmentation | motion_blur | high | 15.6 | 0.410 | 0.115 | 0.116 | — | −0.295 | +0.001 | — |
 
-### Key findings
+### Visual examples
 
-- **Degradation tracks SNR monotonically for every task** — each severity step
-  lowers SNR and performance together (see the per-SNR curves below).
-  Motion blur is the most destructive corruption for localization-heavy tasks
-  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is higher
-  than the noise corruptions' — SNR alone does not fully predict task damage.
-- **Classical enhancement is corruption-specific.** The median filter
-  essentially rescues salt-and-pepper for every task (e.g. detection
-  0.073 → 0.274, PQ 0.107 → 0.309, ORB 0.331 → 0.648 at high severity).
-  NLM denoising barely helps (and slightly hurts low-severity cells) because it
-  smooths away the textures/corners the models and ORB rely on; unsharp masking
-  cannot undo motion blur (a genuine deconvolution problem).
-- **Fine-tuning recovers in-domain and transfers within the corruption family.**
-  Trained only on gauss_noise/high, YOLOv8n more than doubles its mAP on that
-  cell (0.091 → 0.202) and improves the other noise-like cells
-  (salt_pepper/high +0.076, gauss_noise/med +0.042), but *hurts* motion-blur
-  cells — fine-tuning on one corruption does not buy robustness to a different
-  corruption family.
-- **Enhancement and fine-tuning are complementary:** enhancement wins where the
-  corruption is classically invertible (impulse noise), fine-tuning wins where
-  it is not (heavy Gaussian noise).
-
-### Figures
-
-The improvement trend at a glance — recovery (improved − distorted) per cell,
-one panel per task; green = classical enhancement, amber = fine-tuning, bars
-above zero mean the strategy helped:
-
-![recovery per cell](results/figures/recovery_bars.png)
-
-Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
-fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
-fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. This
-makes the fine-tuning effect directly readable per corruption: in gauss_noise
-the fine-tuned line stays nearly flat and crosses above the others as distortion
-grows, while in motion_blur it sits below the distorted line (negative transfer):
-
-![detection vs SNR](results/figures/acc_vs_snr_detection.png)
-![features vs SNR](results/figures/acc_vs_snr_features.png)
-![keypoints vs SNR](results/figures/acc_vs_snr_keypoints.png)
-![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
-
-Per-class AP (clean baseline, and clean vs distorted vs enhanced vs fine-tuned
-on the fine-tune cell gauss_noise/high):
-
-![per-class AP clean](results/figures/per_class_ap_clean.png)
-![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
-
-Input/output examples — clean / distorted (high severity) / enhanced:
+Input/output examples — clean / distorted (high severity) / enhanced. These
+show *why* the numbers behave as they do: the median filter visibly removes
+impulse pixels, while unsharp masking cannot bring back edges that motion blur
+smeared away:
 
 ![gauss noise grid](results/figures/grid_gauss_noise.png)
 ![salt & pepper grid](results/figures/grid_salt_pepper.png)
@@ -233,6 +279,39 @@ With the coverage floor, per-class AP now rests on ≥ 20 objects per class
 - Evaluation: the fine-tuned detector runs on **all 9 distorted val cells** of
   the 1,521-image subset (held out — the model never sees any val2017 image
   during training, so there is no leakage), filling the `finetuned` column above.
+
+### Do the results serve the project goals?
+
+The course defines four measurable outcomes; each is met with a quantified
+answer rather than a demo:
+
+1. **Baseline performance (vs GT)** — met and *validated*: all four baselines
+   land at their expected values (mAP 0.352 vs ~0.373 published, OKS AP 0.657,
+   PQ 0.410, ORB 1.000 by construction). This matters because every later
+   number is a delta against this baseline — if the baseline were off, the
+   whole study would measure pipeline bugs instead of robustness.
+2. **Performance on distorted images — per distortion, per class, per SNR** —
+   met: 36 (task × distortion × severity) cells, all degrading monotonically
+   with SNR. Beyond the requirement, the data shows **SNR alone does not
+   predict task damage**: motion blur has a *higher* SNR than the noise
+   corruptions yet destroys localization tasks the most (ORB −0.80, keypoints
+   −0.50) — spatial structure matters more than pixel-wise error energy.
+3. **Performance on enhanced images** — met, with a sharp engineering
+   conclusion: classical restoration works exactly where the corruption
+   matches the filter's model (median ↔ impulse noise: +0.08…+0.32 across all
+   four tasks) and is neutral-to-harmful elsewhere (NLM smooths away the
+   texture the models need; unsharp masking cannot invert a blur kernel).
+   The negative results are reported deliberately — they delimit *when*
+   enhancement is worth deploying.
+4. **Fine-tuned model on distorted images** — met: +0.111 in-domain (mAP more
+   than doubles), positive transfer within the noise family, and *negative*
+   transfer to motion blur — evidence that fine-tuning buys corruption-specific
+   robustness, not general robustness.
+
+Bottom line: the four phases compose into a **decision matrix** — given a
+corruption type, the results say whether to restore classically, fine-tune the
+model, or fix the capture process (for blur, neither software repair works) —
+which is exactly the trade-off the assignment asks the project to expose.
 
 ---
 
