@@ -105,12 +105,14 @@ metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 
 ### The headline: two repair strategies, and each wins somewhere else
 
-The project's main result in one figure — **recovery** (improved − distorted)
-for every distortion × severity cell, one panel per task. Bars above zero mean
-the repair helped. Classical enhancement (green) rescues impulse noise for
-*every* task and gets stronger as the corruption gets worse; fine-tuning
-(amber, detection only) rescues heavy Gaussian noise; **nothing repairs motion
-blur**:
+The project's main result in one figure — the **actual metric values** after
+each repair, per distortion × severity cell, one panel per task. Blue = the
+damaged score, green/amber = after classical enhancement / fine-tuning, the
+dashed line = the clean baseline, and each label is the **share of the damage
+that the repair recovered**. Classical enhancement rescues **61–75%** of the
+impulse-noise damage for *every* task (and gets stronger as the corruption
+gets worse); fine-tuning recovers **42%** of the heavy-Gaussian-noise damage
+for the detector; **nothing repairs motion blur** (0–9%):
 
 ![recovery per cell](results/figures/recovery_bars.png)
 

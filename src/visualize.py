@@ -90,9 +90,10 @@ def plot_acc_vs_snr(cfg: Dict) -> None:
 
 
 def plot_recovery_bars(cfg: Dict) -> None:
-    """The improvement trend at a glance: recovery (improved − distorted) per
-    distortion × severity cell, one panel per task. Positive bars = the
-    improvement strategy helped; negative = it made things worse."""
+    """Absolute metric values per distortion × severity cell, one panel per
+    task: distorted vs enhanced vs finetuned bars against the clean-baseline
+    line, with '% of the damage recovered' labels on repairs that helped —
+    so both the depth of the damage and the size of the rescue are visible."""
     comp_path = Path(cfg["paths"]["metrics_dir"]) / "comparison.csv"
     if not comp_path.exists():
         return
@@ -101,23 +102,37 @@ def plot_recovery_bars(cfg: Dict) -> None:
     if not tasks:
         return
     sev_order = {"low": 0, "med": 1, "high": 2}
-    fig, axes = plt.subplots(len(tasks), 1, figsize=(10, 2.6 * len(tasks)),
+    fig, axes = plt.subplots(len(tasks), 1, figsize=(11, 3.0 * len(tasks)),
                              sharex=True)
     axes = [axes] if len(tasks) == 1 else list(axes)
     for ax, task in zip(axes, tasks):
         sub = df[df["task"] == task].copy()
         sub["order"] = sub["severity"].map(sev_order)
-        sub = sub.sort_values(["distortion", "order"])
+        sub = sub.sort_values(["distortion", "order"]).reset_index(drop=True)
         labels = [f"{d}\n{s}" for d, s in zip(sub["distortion"], sub["severity"])]
         x = np.arange(len(sub))
-        width = 0.38
-        ax.bar(x - width / 2, sub["recovery_enhance"], width,
-               color=VARIANT_STYLE["enhanced"]["color"], label="enhance")
-        if sub["recovery_finetune"].notna().any():
-            ax.bar(x + width / 2, sub["recovery_finetune"], width,
-                   color=VARIANT_STYLE["finetuned"]["color"], label="finetune")
-        ax.axhline(0, color=INK_MUTED, lw=1)
-        ax.set_ylabel(f"{task}\nrecovery", fontsize=9, color=INK)
+        has_ft = sub["finetuned"].notna().any()
+        series = ["distorted", "enhanced"] + (["finetuned"] if has_ft else [])
+        width = 0.8 / len(series)
+        for i, variant in enumerate(series):
+            xpos = x - 0.4 + (i + 0.5) * width
+            ax.bar(xpos, sub[variant], width,
+                   color=VARIANT_STYLE[variant]["color"], label=variant)
+            if variant == "distorted":
+                continue
+            # label repairs that helped with % of the damage they recovered
+            rec = sub[f"recovery_{'enhance' if variant == 'enhanced' else 'finetune'}"]
+            pct = rec / (-sub["degradation"])
+            for xi, v, p, r in zip(xpos, sub[variant], pct, rec):
+                if not np.isnan(v) and r > 0.02:
+                    ax.text(xi, v + 0.01, f"+{p:.0%}", ha="center", va="bottom",
+                            fontsize=7, color=INK)
+        clean_v = float(sub["clean"].iloc[0])
+        ax.axhline(clean_v, color=INK_MUTED, ls="--", lw=1.5,
+                   label=f"clean = {clean_v:.3f}")
+        ax.set_ylabel(f"{task}\n({'match ratio' if task == 'features' else 'mAP' if task in ('detection', 'keypoints') else 'PQ'})",
+                      fontsize=9, color=INK)
+        ax.set_ylim(0, clean_v * 1.18)
         ax.set_axisbelow(True)
         ax.grid(True, axis="y", color=GRID, lw=0.8)
         ax.tick_params(colors=INK_MUTED, labelsize=8)
@@ -125,9 +140,9 @@ def plot_recovery_bars(cfg: Dict) -> None:
             spine.set_color(GRID)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=8)
-    axes[0].legend(fontsize=8, loc="upper left")
-    fig.suptitle("Recovery vs distorted (positive = the improvement helped)",
-                 fontsize=12)
+        ax.legend(fontsize=7, loc="upper left", ncol=4)
+    fig.suptitle("After repair: metric values vs the clean baseline "
+                 "(labels = share of the damage recovered)", fontsize=12)
     out = _figdir(cfg) / "recovery_bars.png"
     fig.tight_layout()
     fig.savefig(out, dpi=120)
