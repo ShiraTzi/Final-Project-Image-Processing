@@ -50,7 +50,7 @@ PLACE_BG = "#eef2f6"
 PLACE_BORDER = "#aab6c2"
 
 REPO_URL = "https://github.com/ShiraTzi/Final-Project-Image-Processing"
-TEAM = "Yonatan Haba  ·  Shira Tziony"
+TEAM = "Ohad Shpizhizen  ·  Shira Tziony"
 DECK_TITLE = "Robustness of Vision Methods under Image Distortions"
 DECK_SUBTITLE = "Image Processing / Vision course project — COCO benchmark"
 

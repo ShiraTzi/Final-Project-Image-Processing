@@ -1,6 +1,6 @@
 # Final-Project-Image-Processing
 
-**Team:** Yonatan Haba · Shira Tziony
+**Team:** Ohad Shpizhizen · Shira Tziony
 
 Robustness benchmark for image-processing / vision methods under image
 distortion, on the **COCO** dataset. For each task we measure a **clean
