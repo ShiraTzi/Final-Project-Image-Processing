@@ -1,0 +1,20 @@
+{
+  "task": "keypoints",
+  "variant": "enhanced__gauss_noise__high",
+  "iou_type": "keypoints",
+  "mAP": 0.316,
+  "mAP_50": 0.5539,
+  "mAP_75": 0.3056,
+  "stats": [
+    0.316,
+    0.5539,
+    0.3056,
+    0.2254,
+    0.4572,
+    0.3926,
+    0.6461,
+    0.3824,
+    0.2902,
+    0.542
+  ]
+}

@@ -28,7 +28,7 @@ models/*.pt
 !models/yolov8_finetuned.pt
 yolo_work/
 runs/
-yolo*.pt
+/yolo*.pt
 slurm/logs/
 
 # VSCode

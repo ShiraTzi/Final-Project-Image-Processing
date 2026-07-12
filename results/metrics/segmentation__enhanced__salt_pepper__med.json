@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "variant": "enhanced__salt_pepper__med",
+  "PQ": 0.3734,
+  "SQ": 0.7678,
+  "RQ": 0.4586,
+  "PQ_things": 0.4354,
+  "PQ_stuff": 0.2799,
+  "n_images": 1521
+}

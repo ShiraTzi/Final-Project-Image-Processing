@@ -1,0 +1,10 @@
+{
+  "task": "features",
+  "variant": "distorted__gauss_noise__med",
+  "method": "ORB",
+  "match_ratio": 0.7307,
+  "n_images": 1521,
+  "n_skipped_no_clean_features": 0,
+  "nfeatures": 800,
+  "distance_threshold": 64
+}

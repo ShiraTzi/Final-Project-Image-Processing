@@ -407,8 +407,8 @@ def build_specs(cfg: dict, data: dict, C: dict) -> list[dict]:
             "title": "Distortion examples",
             "figure": fp,
             "figure_name": fn,
-            "caption": f"{cap_dist.replace('_', ' ')}: clean vs corrupted at increasing severity "
-            "(same paired images)",
+            "caption": f"{cap_dist.replace('_', ' ')}: clean / distorted (high severity) / "
+            "enhanced (same paired images)",
         }
     )
 

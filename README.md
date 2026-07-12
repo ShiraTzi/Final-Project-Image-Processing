@@ -111,23 +111,26 @@ table: [results/metrics/comparison.md](results/metrics/comparison.md) /
 [`comparison.csv`](results/metrics/comparison.csv); long format with every
 metric in [`summary_long.csv`](results/metrics/summary_long.csv).
 
-### The headline: two repair strategies, and each wins somewhere else
+### The headline: matched repairs recover most of the damage — when the repair actually matches
 
 The project's main result in one figure — the **actual metric values** after
 each repair, per distortion × severity cell, one panel per task. Blue = the
 damaged score, green/amber = after classical enhancement / fine-tuning, the
 dashed line = the clean baseline, and each label is the **share of the damage
-that the repair recovered**. Classical enhancement rescues **61–75%** of the
-impulse-noise damage for *every* task (and gets stronger as the corruption
-gets worse); fine-tuning recovers **42%** of the heavy-Gaussian-noise damage
-for the detector; **nothing repairs motion blur** (0–9%):
+that the repair recovered**. The median filter rescues **80–91%** of the
+impulse-noise damage for detection (74–86% for segmentation); non-blind
+Wiener deconvolution — possible because the benchmark logs each image's blur
+kernel — recovers **25–68%** of the motion-blur damage that a blind sharpening
+filter couldn't touch (0–9% in the archived v1 run); and the mixture-trained
+detector recovers **35%** of the heavy-Gaussian-noise damage, the corruption
+classical filtering repairs worst:
 
 ![recovery per cell](results/figures/recovery_bars.png)
 
-The same story per object class, on the fine-tuning cell (gauss_noise/high):
-the fine-tuned detector (amber) beats the distorted model (blue) on **every**
-class and recovers most of the clean AP (gray) — e.g. `bus` 0.07 → 0.42,
-`microwave` 0.11 → 0.44 — while classical denoising (green) recovers far less:
+The same story per object class, on the gauss_noise/high cell: the fine-tuned
+detector (amber) beats the distorted model (blue) across the board and
+recovers a large share of the clean AP (gray), while classical denoising
+(green) recovers less:
 
 ![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
 
@@ -136,23 +139,35 @@ class and recovers most of the clean AP (gray) — e.g. `bus` 0.07 → 0.42,
 - **Degradation tracks SNR monotonically for every task** — each severity step
   lowers SNR and performance together (see the per-SNR curves below).
   Motion blur is the most destructive corruption for localization-heavy tasks
-  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is higher
+  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is *higher*
   than the noise corruptions' — SNR alone does not fully predict task damage.
-- **Classical enhancement is corruption-specific.** The median filter
-  essentially rescues salt-and-pepper for every task (e.g. detection
-  0.073 → 0.274, PQ 0.107 → 0.309, ORB 0.331 → 0.648 at high severity).
-  NLM denoising barely helps (and slightly hurts low-severity cells) because it
-  smooths away the textures/corners the models and ORB rely on; unsharp masking
-  cannot undo motion blur (a genuine deconvolution problem).
-- **Fine-tuning recovers in-domain and transfers within the corruption family.**
-  Trained only on gauss_noise/high, YOLOv8n more than doubles its mAP on that
-  cell (0.091 → 0.202) and improves the other noise-like cells
-  (salt_pepper/high +0.076, gauss_noise/med +0.042), but *hurts* motion-blur
-  cells — fine-tuning on one corruption does not buy robustness to a different
-  corruption family.
-- **Enhancement and fine-tuning are complementary:** enhancement wins where the
-  corruption is classically invertible (impulse noise), fine-tuning wins where
-  it is not (heavy Gaussian noise).
+- **Classical enhancement works exactly where the corruption matches the
+  filter's model.** The median filter essentially rescues salt-and-pepper for
+  every task (detection 0.079 → 0.321, PQ 0.105 → 0.348, OKS AP 0.348 → 0.598
+  at high severity). Wiener deconvolution with the *logged* kernel repairs
+  motion blur (detection 0.157 → 0.257 at med severity; ORB 0.20 → 0.48 at
+  high) — but this is **known-degradation restoration**: a blind kernel guess
+  measured *worse than no restoration at all*. Gaussian noise is the negative
+  result: sigma-adaptive NLM helps only box-level detection (+0.056 at high),
+  while the pixel-precise tasks (keypoints, panoptic) score *lower* on
+  denoised images at every severity — smoothing trades exactly the fine
+  texture they depend on.
+- **Fine-tuning on a corruption *mixture* is robust across the board.**
+  Trained on a per-image mix of clean + all 9 cells, YOLOv8n improves every
+  med/high cell (gauss_noise/high 0.097 → 0.186, salt_pepper/high +0.124,
+  motion_blur/high +0.056) with only small dips on near-clean low-severity
+  cells (−0.011…−0.035). The v1 single-cell training (archived in
+  [docs/archive/](docs/archive/)) had shown textbook negative transfer —
+  worse than the pretrained model on 5 of 9 cells.
+- **Robustness costs clean accuracy, and now it's measured:** the fine-tuned
+  model scores **0.284 on clean images vs 0.352 pretrained** (−0.068). This
+  trade-off — invisible in v1, which never evaluated the fine-tuned model on
+  clean data — is why the low-severity cells dip.
+- **Stacking the two repairs helps only where each is partial.** At
+  motion_blur/high, enhancement→fine-tuned is the best cell (0.174, a 39%
+  recovery vs 25%/19% for either repair alone). For salt & pepper the median
+  filter alone beats the stack — the filtered images resemble clean data more
+  than the fine-tuned model's training distribution.
 
 ### Clean baselines (Phase 1)
 
@@ -161,7 +176,7 @@ class and recovers most of the clean AP (gray) — e.g. `bus` 0.07 → 0.42,
 | Feature matching (ORB) | match ratio | 1.000 |
 | Object detection (YOLOv8n) | mAP@[.5:.95] | 0.352 |
 | Keypoint detection (Keypoint R-CNN) | OKS AP | 0.657 |
-| Panoptic segmentation (Panoptic FPN) | PQ | 0.410 (SQ 0.775 / RQ 0.500) |
+| Panoptic segmentation (Panoptic FPN) | PQ | 0.410 (SQ 0.775 / RQ 0.500; things 0.475 / stuff 0.312) |
 
 All three pretrained models land within ~0.02 of their published full-val2017
 scores, which validates the measurement pipeline itself (GT handling, format
@@ -171,10 +186,10 @@ conversions, COCOeval) before any distortion enters the picture.
 
 Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
 fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
-fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. In
-gauss_noise the fine-tuned line stays nearly flat and crosses above the others
-as distortion grows, while in motion_blur it sits below the distorted line
-(negative transfer):
+fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. The
+repaired lines flatten the SNR slope — the harder the corruption, the larger
+the gap they open over the distorted line — and in gauss_noise the amber
+fine-tuned line crosses above everything as distortion grows:
 
 ![detection vs SNR](results/figures/acc_vs_snr_detection.png)
 ![features vs SNR](results/figures/acc_vs_snr_features.png)
@@ -197,63 +212,79 @@ and ground truth — only the image quality changes. **How to read the columns:*
   per task). Metrics: detection = bbox mAP@[.5:.95], features = ORB match
   ratio, keypoints = OKS AP, segmentation = PQ. All 0–1, higher is better.
 - **distorted** — the same metric on the corrupted images.
-- **enhanced** — the metric after the matched classical restoration (NLM for
-  Gaussian noise, median filter for salt & pepper, unsharp for motion blur).
-- **finetuned** — the metric of the fine-tuned YOLOv8n (detection only, the DL
-  improvement; **trained on gauss_noise/high**, evaluated on all cells).
+- **enhanced** — the metric after the matched classical restoration
+  (sigma-adaptive NLM for Gaussian noise, median filter for salt & pepper,
+  non-blind Wiener deconvolution for motion blur).
+- **finetuned** — the fine-tuned YOLOv8n (detection only, the DL improvement;
+  **trained on a per-image mixture of clean + all 9 cells**, evaluated on all
+  cells). On clean images it scores **0.284** vs the pretrained 0.352 — the
+  measured price of robustness.
+- **finetuned+enh** — the fine-tuned detector running on the *enhanced*
+  images: both repairs stacked.
 - **degradation** = distorted − clean (how much the corruption destroyed).
-- **recovery (enhance / finetune)** = improved − distorted (how much each
-  improvement strategy won back; negative = made it worse).
+- **recovery (enhance / finetune / combined)** = improved − distorted (how
+  much each improvement strategy won back; negative = made it worse).
 
-Example — `salt_pepper/high`: clean mAP 0.352 collapses to 0.073 (−0.280);
-the median filter restores it to 0.274 (+0.202), the fine-tuned model to
-0.148 (+0.076). Bold marks the notable wins.
+Example — `salt_pepper/high`: clean mAP 0.352 collapses to 0.079 (−0.274);
+the median filter restores it to 0.321 (+0.242, 89% of the damage), the
+fine-tuned model to 0.203 (+0.124), both together to 0.263. Bold marks
+recoveries ≥ +0.04.
 
-| task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | degradation | recovery (enhance) | recovery (finetune) |
-|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
-| detection | gauss_noise | low | 19.6 | 0.352 | 0.285 | 0.265 | 0.244 | −0.067 | −0.020 | −0.041 |
-| detection | gauss_noise | med | 13.9 | 0.352 | 0.193 | 0.203 | **0.235** | −0.159 | +0.010 | **+0.042** |
-| detection | gauss_noise | high | 9.9 | 0.352 | 0.091 | 0.106 | **0.202** | −0.261 | +0.015 | **+0.111** |
-| detection | salt_pepper | low | 18.7 | 0.352 | 0.265 | **0.318** | 0.207 | −0.088 | **+0.054** | −0.058 |
-| detection | salt_pepper | med | 11.8 | 0.352 | 0.151 | **0.301** | 0.176 | −0.201 | **+0.150** | +0.026 |
-| detection | salt_pepper | high | 8.2 | 0.352 | 0.073 | **0.274** | **0.148** | −0.280 | **+0.202** | **+0.076** |
-| detection | motion_blur | low | 20.9 | 0.352 | 0.288 | 0.281 | 0.192 | −0.065 | −0.007 | −0.096 |
-| detection | motion_blur | med | 17.7 | 0.352 | 0.161 | 0.152 | 0.098 | −0.191 | −0.009 | −0.063 |
-| detection | motion_blur | high | 15.6 | 0.352 | 0.056 | 0.054 | 0.034 | −0.296 | −0.001 | −0.022 |
-| features | gauss_noise | low | 19.6 | 1.000 | 0.818 | 0.754 | — | −0.182 | −0.064 | — |
-| features | gauss_noise | med | 13.9 | 1.000 | 0.721 | 0.707 | — | −0.280 | −0.013 | — |
-| features | gauss_noise | high | 9.9 | 1.000 | 0.609 | 0.607 | — | −0.391 | −0.001 | — |
-| features | salt_pepper | low | 18.7 | 1.000 | 0.556 | **0.698** | — | −0.444 | **+0.142** | — |
-| features | salt_pepper | med | 11.8 | 1.000 | 0.409 | **0.681** | — | −0.591 | **+0.271** | — |
-| features | salt_pepper | high | 8.2 | 1.000 | 0.331 | **0.648** | — | −0.669 | **+0.316** | — |
-| features | motion_blur | low | 20.9 | 1.000 | 0.641 | 0.672 | — | −0.359 | +0.031 | — |
-| features | motion_blur | med | 17.7 | 1.000 | 0.403 | **0.444** | — | −0.598 | **+0.041** | — |
-| features | motion_blur | high | 15.6 | 1.000 | 0.203 | **0.252** | — | −0.797 | **+0.050** | — |
-| keypoints | gauss_noise | low | 19.6 | 0.657 | 0.570 | 0.500 | — | −0.088 | −0.070 | — |
-| keypoints | gauss_noise | med | 13.9 | 0.657 | 0.474 | 0.453 | — | −0.183 | −0.021 | — |
-| keypoints | gauss_noise | high | 9.9 | 0.657 | 0.352 | 0.353 | — | −0.306 | +0.001 | — |
-| keypoints | salt_pepper | low | 18.7 | 0.657 | 0.557 | 0.582 | — | −0.101 | +0.025 | — |
-| keypoints | salt_pepper | med | 11.8 | 0.657 | 0.433 | **0.566** | — | −0.224 | **+0.133** | — |
-| keypoints | salt_pepper | high | 8.2 | 0.657 | 0.325 | **0.537** | — | −0.332 | **+0.212** | — |
-| keypoints | motion_blur | low | 20.9 | 0.657 | 0.552 | 0.543 | — | −0.105 | −0.009 | — |
-| keypoints | motion_blur | med | 17.7 | 0.657 | 0.374 | 0.364 | — | −0.283 | −0.010 | — |
-| keypoints | motion_blur | high | 15.6 | 0.657 | 0.163 | 0.155 | — | −0.495 | −0.007 | — |
-| segmentation | gauss_noise | low | 19.6 | 0.410 | 0.355 | 0.295 | — | −0.055 | −0.060 | — |
-| segmentation | gauss_noise | med | 13.9 | 0.410 | 0.289 | 0.244 | — | −0.120 | −0.046 | — |
-| segmentation | gauss_noise | high | 9.9 | 0.410 | 0.201 | 0.185 | — | −0.208 | −0.016 | — |
-| segmentation | salt_pepper | low | 18.7 | 0.410 | 0.282 | **0.361** | — | −0.128 | **+0.080** | — |
-| segmentation | salt_pepper | med | 11.8 | 0.410 | 0.159 | **0.344** | — | −0.251 | **+0.185** | — |
-| segmentation | salt_pepper | high | 8.2 | 0.410 | 0.107 | **0.309** | — | −0.302 | **+0.202** | — |
-| segmentation | motion_blur | low | 20.9 | 0.410 | 0.342 | 0.339 | — | −0.068 | −0.003 | — |
-| segmentation | motion_blur | med | 17.7 | 0.410 | 0.230 | 0.229 | — | −0.179 | −0.001 | — |
-| segmentation | motion_blur | high | 15.6 | 0.410 | 0.115 | 0.116 | — | −0.295 | +0.001 | — |
+| task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | finetuned+enh | degradation | recovery (enhance) | recovery (finetune) | recovery (combined) |
+|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| detection | gauss_noise | low | 19.5 | 0.352 | 0.293 | 0.288 | 0.266 | 0.244 | −0.059 | −0.004 | −0.026 | −0.048 |
+| detection | gauss_noise | med | 13.9 | 0.352 | 0.201 | 0.213 | 0.233 | 0.207 | −0.151 | +0.013 | +0.032 | +0.006 |
+| detection | gauss_noise | high | 10.0 | 0.352 | 0.097 | **0.154** | **0.186** | **0.164** | −0.255 | **+0.056** | **+0.089** | **+0.067** |
+| detection | motion_blur | low | 20.8 | 0.352 | 0.294 | 0.334 | 0.259 | 0.275 | −0.058 | +0.039 | −0.035 | −0.020 |
+| detection | motion_blur | med | 17.7 | 0.352 | 0.157 | **0.257** | **0.202** | **0.240** | −0.195 | **+0.100** | **+0.044** | **+0.083** |
+| detection | motion_blur | high | 15.6 | 0.352 | 0.059 | **0.132** | **0.114** | **0.174** | −0.293 | **+0.073** | **+0.056** | **+0.116** |
+| detection | salt_pepper | low | 18.7 | 0.352 | 0.284 | **0.339** | 0.273 | 0.269 | −0.068 | **+0.055** | −0.011 | −0.015 |
+| detection | salt_pepper | med | 11.8 | 0.352 | 0.167 | **0.336** | **0.245** | **0.267** | −0.185 | **+0.169** | **+0.078** | **+0.100** |
+| detection | salt_pepper | high | 8.2 | 0.352 | 0.079 | **0.321** | **0.203** | **0.263** | −0.274 | **+0.242** | **+0.124** | **+0.184** |
+| features | gauss_noise | low | 19.5 | 1.000 | 0.834 | 0.800 | — | — | −0.166 | −0.034 | — | — |
+| features | gauss_noise | med | 13.9 | 1.000 | 0.731 | 0.670 | — | — | −0.269 | −0.061 | — | — |
+| features | gauss_noise | high | 10.0 | 1.000 | 0.616 | 0.538 | — | — | −0.384 | −0.079 | — | — |
+| features | motion_blur | low | 20.8 | 1.000 | 0.643 | **0.781** | — | — | −0.357 | **+0.138** | — | — |
+| features | motion_blur | med | 17.7 | 1.000 | 0.399 | **0.626** | — | — | −0.601 | **+0.227** | — | — |
+| features | motion_blur | high | 15.6 | 1.000 | 0.197 | **0.476** | — | — | −0.803 | **+0.280** | — | — |
+| features | salt_pepper | low | 18.7 | 1.000 | 0.554 | **0.705** | — | — | −0.446 | **+0.151** | — | — |
+| features | salt_pepper | med | 11.8 | 1.000 | 0.404 | **0.692** | — | — | −0.596 | **+0.288** | — | — |
+| features | salt_pepper | high | 8.2 | 1.000 | 0.326 | **0.662** | — | — | −0.674 | **+0.336** | — | — |
+| keypoints | gauss_noise | low | 19.5 | 0.657 | 0.590 | 0.558 | — | — | −0.068 | −0.031 | — | — |
+| keypoints | gauss_noise | med | 13.9 | 0.657 | 0.489 | 0.441 | — | — | −0.168 | −0.048 | — | — |
+| keypoints | gauss_noise | high | 10.0 | 0.657 | 0.369 | 0.316 | — | — | −0.288 | −0.053 | — | — |
+| keypoints | motion_blur | low | 20.8 | 0.657 | 0.578 | **0.620** | — | — | −0.080 | **+0.043** | — | — |
+| keypoints | motion_blur | med | 17.7 | 0.657 | 0.386 | **0.524** | — | — | −0.272 | **+0.138** | — | — |
+| keypoints | motion_blur | high | 15.6 | 0.657 | 0.159 | **0.387** | — | — | −0.499 | **+0.229** | — | — |
+| keypoints | salt_pepper | low | 18.7 | 0.657 | 0.590 | 0.623 | — | — | −0.068 | +0.034 | — | — |
+| keypoints | salt_pepper | med | 11.8 | 0.657 | 0.438 | **0.614** | — | — | −0.219 | **+0.176** | — | — |
+| keypoints | salt_pepper | high | 8.2 | 0.657 | 0.348 | **0.598** | — | — | −0.310 | **+0.250** | — | — |
+| segmentation | gauss_noise | low | 19.5 | 0.410 | 0.359 | 0.317 | — | — | −0.050 | −0.043 | — | — |
+| segmentation | gauss_noise | med | 13.9 | 0.410 | 0.294 | 0.240 | — | — | −0.116 | −0.055 | — | — |
+| segmentation | gauss_noise | high | 10.0 | 0.410 | 0.209 | 0.163 | — | — | −0.201 | −0.046 | — | — |
+| segmentation | motion_blur | low | 20.8 | 0.410 | 0.354 | 0.385 | — | — | −0.056 | +0.031 | — | — |
+| segmentation | motion_blur | med | 17.7 | 0.410 | 0.231 | **0.311** | — | — | −0.179 | **+0.081** | — | — |
+| segmentation | motion_blur | high | 15.6 | 0.410 | 0.123 | **0.204** | — | — | −0.287 | **+0.081** | — | — |
+| segmentation | salt_pepper | low | 18.7 | 0.410 | 0.290 | **0.378** | — | — | −0.120 | **+0.088** | — | — |
+| segmentation | salt_pepper | med | 11.8 | 0.410 | 0.150 | **0.373** | — | — | −0.260 | **+0.223** | — | — |
+| segmentation | salt_pepper | high | 8.2 | 0.410 | 0.105 | **0.348** | — | — | −0.304 | **+0.243** | — | — |
 
 ### Visual examples
 
-Input/output examples — clean / distorted (high severity) / enhanced. These
-show *why* the numbers behave as they do: the median filter visibly removes
-impulse pixels, while unsharp masking cannot bring back edges that motion blur
-smeared away:
+**Predictions drawn on the images** (the course's "image with annotation"):
+gray dashed boxes = COCO ground truth, solid boxes = YOLO detections with
+scores, columns = clean / distorted (high severity) / enhanced / distorted
+with the fine-tuned model. You can watch detections disappear under the
+corruption and reappear after each repair:
+
+![annotated gauss noise](results/figures/annotated_gauss_noise.png)
+![annotated salt & pepper](results/figures/annotated_salt_pepper.png)
+![annotated motion blur](results/figures/annotated_motion_blur.png)
+
+Raw input/output examples — clean / distorted (high severity) / enhanced.
+These show *why* the numbers behave as they do: the median filter visibly
+removes impulse pixels, and the known-kernel Wiener filter visibly re-sharpens
+what motion blur smeared:
 
 ![gauss noise grid](results/figures/grid_gauss_noise.png)
 ![salt & pepper grid](results/figures/grid_salt_pepper.png)
@@ -280,15 +311,22 @@ With the coverage floor, per-class AP now rests on ≥ 20 objects per class
 
 ### Fine-tuning setup (Phase 4)
 
-- Data: 1,500-image train2017 subset, distorted with **gauss_noise/high**
-  (same deterministic per-image RNG as the val distortions), **real COCO boxes**
-  converted to YOLO labels (no pseudo-labels).
-- Training: `yolov8n.pt` continued for 20 epochs, imgsz 640, batch 16 —
-  ~6 minutes on one NVIDIA L4. Checkpoint: `models/yolov8_finetuned.pt`
-  (the clean baseline model is untouched).
-- Evaluation: the fine-tuned detector runs on **all 9 distorted val cells** of
-  the 1,521-image subset (held out — the model never sees any val2017 image
-  during training, so there is no leakage), filling the `finetuned` column above.
+- Data: 4,500-image train2017 subset, corrupted on the fly with a **per-image
+  seeded mixture** of clean + all 9 (distortion × severity) cells (~412–490
+  images per variant; same deterministic per-image RNG as the val
+  distortions), **real COCO boxes** converted to YOLO labels (no
+  pseudo-labels). 4,050 images train / 450 held out as the YOLO val split so
+  best-checkpoint selection is honest.
+- Training: `yolov8n.pt` continued with AdamW (lr0 = 1e-4 pinned, cosine
+  schedule), imgsz 640, batch 16; early-stopped at epoch 15 of 30 (patience
+  10) — ~12 minutes on one NVIDIA L4. Checkpoint:
+  [`models/yolov8_finetuned.pt`](models/yolov8_finetuned.pt) (committed; the
+  clean baseline model is untouched).
+- Evaluation: the fine-tuned detector runs on the **clean** val subset
+  (forgetting check: 0.284 vs 0.352 pretrained), on **all 9 distorted** cells,
+  and on **all 9 enhanced** cells (the `finetuned+enh` column) of the
+  1,521-image subset — all held out; the model never sees a val2017 image
+  during training, so there is no leakage.
 
 ### Do the results serve the project goals?
 
@@ -302,26 +340,32 @@ answer rather than a demo:
    whole study would measure pipeline bugs instead of robustness.
 2. **Performance on distorted images — per distortion, per class, per SNR** —
    met: 36 (task × distortion × severity) cells, all degrading monotonically
-   with SNR. Beyond the requirement, the data shows **SNR alone does not
-   predict task damage**: motion blur has a *higher* SNR than the noise
-   corruptions yet destroys localization tasks the most (ORB −0.80, keypoints
-   −0.50) — spatial structure matters more than pixel-wise error energy.
+   with SNR, with the exact per-image degradation parameters logged. Beyond
+   the requirement, the data shows **SNR alone does not predict task damage**:
+   motion blur has a *higher* SNR than the noise corruptions yet destroys
+   localization tasks the most (ORB −0.80, keypoints −0.50) — spatial
+   structure matters more than pixel-wise error energy.
 3. **Performance on enhanced images** — met, with a sharp engineering
-   conclusion: classical restoration works exactly where the corruption
-   matches the filter's model (median ↔ impulse noise: +0.08…+0.32 across all
-   four tasks) and is neutral-to-harmful elsewhere (NLM smooths away the
-   texture the models need; unsharp masking cannot invert a blur kernel).
-   The negative results are reported deliberately — they delimit *when*
-   enhancement is worth deploying.
-4. **Fine-tuned model on distorted images** — met: +0.111 in-domain (mAP more
-   than doubles), positive transfer within the noise family, and *negative*
-   transfer to motion blur — evidence that fine-tuning buys corruption-specific
-   robustness, not general robustness.
+   conclusion: classical restoration is only as good as its *degradation
+   model*. Where the model is exact, recovery is large — median ↔ impulse
+   noise (+0.03…+0.34 across all four tasks), logged-kernel Wiener ↔ motion
+   blur (+0.03…+0.28) — and where no faithful inverse exists (i.i.d. Gaussian
+   noise), denoising helps only the coarse box-level task and *hurts* the
+   pixel-precise ones. The remaining negative results are reported
+   deliberately — they delimit *when* enhancement is worth deploying.
+4. **Fine-tuned model on distorted images** — met: mixture training improves
+   every med/high cell (up to +0.124) with no catastrophic negative transfer
+   (v1's single-cell training, archived, lost on 5 of 9 cells), and the
+   robustness price is *measured*: −0.068 mAP on clean images, which is
+   exactly where the small low-severity dips come from.
 
-Bottom line: the four phases compose into a **decision matrix** — given a
-corruption type, the results say whether to restore classically, fine-tune the
-model, or fix the capture process (for blur, neither software repair works) —
-which is exactly the trade-off the assignment asks the project to expose.
+Bottom line: the four phases compose into a **decision matrix** — impulse
+noise: restore classically (cheapest, best); motion blur with a known/
+calibratable kernel: deconvolve, and stack fine-tuning if the blur is heavy;
+Gaussian noise: fine-tune the model, don't filter; and if the deployment also
+sees clean images, budget the measured −0.068 clean-accuracy cost or route
+inputs by corruption type — exactly the trade-off the assignment asks the
+project to expose.
 
 ---
 
@@ -425,7 +469,7 @@ src/
   config.py                # config loader + variant/path helpers
   data.py                  # download annotations (+panoptic) + subset images; seeded splits
   distortions.py           # gaussian / salt-pepper / motion-blur + compute_snr
-  enhancement.py           # NLM+bilateral / median / unsharp restorers
+  enhancement.py           # adaptive-NLM / median / non-blind Wiener restorers
   models.py                # YOLOv8 loader (+COCO80<->91 map), Keypoint R-CNN loader
   inference.py             # detection (YOLO) + keypoints -> COCO prediction JSON
   segmentation.py          # Panoptic FPN inference + PQ  (runs under .venv-det)

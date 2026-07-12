@@ -1,0 +1,20 @@
+{
+  "task": "keypoints",
+  "variant": "distorted__motion_blur__high",
+  "iou_type": "keypoints",
+  "mAP": 0.1586,
+  "mAP_50": 0.3355,
+  "mAP_75": 0.133,
+  "stats": [
+    0.1586,
+    0.3355,
+    0.133,
+    0.0465,
+    0.3216,
+    0.2225,
+    0.4393,
+    0.2025,
+    0.0834,
+    0.4258
+  ]
+}
