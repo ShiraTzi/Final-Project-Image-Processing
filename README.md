@@ -491,7 +491,9 @@ All knobs live in [configs/config.yaml](configs/config.yaml):
 - `distortions:` — the three corruptions × 3 severities
 - `tasks:` — `[detection, keypoints, segmentation]`
 - `yolo.weights` — `yolov8n.pt` (bump to `yolov8s/m.pt` for accuracy)
-- `finetune:` — epochs / batch / imgsz / which distortion to fine-tune on
+- `finetune:` — epochs / batch / imgsz / lr0 / val_fraction (training always
+  uses the clean+distortions mixture; `distortion`/`severity` only pick the
+  showcase cell for the per-class figure)
 - `segmentation:` — detectron2 venv python path + Panoptic FPN config
 
 ## Outputs
