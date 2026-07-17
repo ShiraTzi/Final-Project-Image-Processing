@@ -51,7 +51,8 @@ def stage_distort(cfg, force):
 
 def stage_enhance(cfg, force):
     from src.enhancement import build_enhanced_sets
-    build_enhanced_sets(cfg)   # internally skips existing images
+    workers = int(cfg.get("enhancement", {}).get("workers", 8))
+    build_enhanced_sets(cfg, workers=workers)   # internally skips existing images
 
 
 def _variants(cfg):

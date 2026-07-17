@@ -17,6 +17,7 @@ requests
 # Distortions + COCO eval
 albumentations
 pycocotools
+bm3d                 # non-blind Gaussian-noise restoration (Phase 3)
 
 # Plotting + tables
 matplotlib

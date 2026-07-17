@@ -327,10 +327,12 @@ def build_specs(cfg: dict, data: dict, C: dict) -> list[dict]:
                 "parameters logged per image (incl. motion-blur kernel angle)",
                 "Lossless PNG storage — a JPEG round-trip would reshape the corruption",
                 "Per-image SNR computed against the clean reference",
-                "Matched enhancement per corruption: sigma-adaptive NLM (Gaussian noise), "
-                "median filter (salt & pepper), non-blind Wiener with the logged kernel "
-                "(motion blur)",
-                "Fine-tune = per-image mixture of clean + all 9 corruption cells; "
+                "Matched NON-BLIND enhancement per corruption: BM3D with the logged "
+                "sigma (Gaussian noise), median filter (salt & pepper), Wiener with "
+                "the logged kernel (motion blur) — v2's NLM hurt pixel-precise tasks "
+                "and is archived",
+                "Fine-tune = per-image mixture: 25% clean + 9 corruption cells, half "
+                "of the corrupted picks classically restored (deployment domain); "
                 f"AdamW lr {lr_txt}; held-out train split for checkpoint selection",
                 "Fine-tuned model evaluated on clean + distorted + enhanced val cells",
             ],
@@ -496,10 +498,14 @@ def build_specs(cfg: dict, data: dict, C: dict) -> list[dict]:
                 f"(enhance {w['enh']:+.3f} vs fine-tune {w['ft']:+.3f} mAP at high severity)"
             )
     b11 += [
-        "Enhancement is corruption-specific — each corruption needs its matched restorer",
-        "Fine-tuning needs mixture training — single-corruption training "
-        "negative-transfers to every other cell",
-        "Blur is only repairable because the kernel is known (non-blind Wiener)",
+        "Enhancement is corruption-specific — each corruption needs its matched "
+        "restorer, and the RIGHT one: NLM hurt what BM3D repairs (all 12 gauss "
+        "cells flipped positive)",
+        "Non-blind beats blind everywhere: logged kernel (Wiener), logged sigma "
+        "(BM3D); a blind kernel guess measured worse than no restoration",
+        "Fine-tune when the corruption is unknown (worst cell -0.012); stack "
+        "restore+fine-tune for heavy blur — additive now that training saw "
+        "restored images",
     ]
     specs.append({"layout": "bullets", "title": "Decision matrix / conclusions", "bullets": b11})
 
@@ -511,8 +517,9 @@ def build_specs(cfg: dict, data: dict, C: dict) -> list[dict]:
             "bullets": [
                 "ORB match ratio structurally penalizes smoothing enhancers — it is a "
                 "fidelity-to-clean metric, not a task-utility metric",
-                "Wiener deconvolution uses the logged (oracle) kernel; blind deconvolution "
-                "with a wrong angle measured WORSE than no restoration",
+                "Wiener and BM3D use the logged (oracle) degradation params; deployed "
+                "systems must calibrate or estimate them (blind kernel guess measured "
+                "WORSE than no restoration)",
                 "yolov8n is the smallest detector in its family — absolute mAP is modest",
                 "Evaluation subset is ≈1.5k images (class-coverage-balanced, seeded)",
             ],
