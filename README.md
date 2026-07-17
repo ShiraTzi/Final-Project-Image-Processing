@@ -357,6 +357,32 @@ corruption and reappear after each repair:
 ![annotated salt & pepper](results/figures/annotated_salt_pepper.png)
 ![annotated motion blur](results/figures/annotated_motion_blur.png)
 
+**Panoptic segmentation drawn on the images** — ground truth / clean /
+distorted (high severity) / enhanced, same scenes as above. Color = category
+(consistent across panels), white hairlines = segment boundaries, and each
+column header carries the cell's PQ. You can see the RQ mechanism from the
+key findings directly: under corruption whole segments disappear or flip
+category (the teddy bears turn into mislabeled fragments), and the matched
+restoration brings them back:
+
+![panoptic gauss noise](results/figures/panoptic_gauss_noise.png)
+![panoptic salt & pepper](results/figures/panoptic_salt_pepper.png)
+![panoptic motion blur](results/figures/panoptic_motion_blur.png)
+
+**ORB feature matching visualized** — the low-level metric, drawn. Each pair
+is the clean image (left) matched against the distorted / enhanced variant
+(right); lines are *good* matches (same matcher and Hamming ≤ 64 threshold
+as the metric) and the caption under each pair is the actual per-image score:
+good matches / clean keypoints. Two things are visible at a glance: how many
+matches each repair wins back, and their *geometry* — under heavy blur the
+few surviving matches include crossing (false) correspondences, while the
+Wiener-restored pair shows dense parallel lines, i.e. spatially consistent
+true matches:
+
+![orb matches gauss noise](results/figures/orb_matches_gauss_noise.png)
+![orb matches salt & pepper](results/figures/orb_matches_salt_pepper.png)
+![orb matches motion blur](results/figures/orb_matches_motion_blur.png)
+
 Raw input/output examples — clean / distorted (high severity) / enhanced.
 These show *why* the numbers behave as they do: BM3D removes the heavy grain
 while keeping edges and texture, the median filter visibly removes impulse
@@ -574,7 +600,8 @@ src/
   segmentation.py          # Panoptic FPN inference + PQ  (runs under .venv-det)
   metrics.py               # COCOeval (bbox/keypoints); shells out for segmentation PQ
   tables.py                # comparison / degradation / recovery tables
-  visualize.py             # acc-vs-SNR curves, per-class AP bars, image grids
+  visualize.py             # acc-vs-SNR curves, per-class AP bars, image grids,
+                           #   annotated detection / panoptic-overlay / ORB-match grids
   finetune_det.py          # fine-tune YOLOv8 on distorted train2017 (real GT)
 scripts/run_pipeline.py    # resumable orchestrator over all phases
 slurm/                     # pipeline / inference / finetune sbatch jobs

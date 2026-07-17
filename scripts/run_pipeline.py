@@ -112,6 +112,7 @@ def stage_report(cfg, force):
     from src.visualize import (
         plot_acc_vs_snr, plot_recovery_bars, plot_per_class_ap,
         plot_per_class_comparison, plot_image_grids, plot_annotated_grids,
+        plot_orb_match_grids, plot_panoptic_grids,
     )
     build_tables(cfg)
     plot_acc_vs_snr(cfg)
@@ -120,6 +121,8 @@ def stage_report(cfg, force):
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
     plot_annotated_grids(cfg)
+    plot_orb_match_grids(cfg)
+    plot_panoptic_grids(cfg)
 
 
 STAGES = {
