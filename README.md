@@ -185,6 +185,63 @@ with the fine-tuned detector (amber) as the model-side repair:
   vs 25%/18% for either repair alone). Where restoration is near-total
   (salt & pepper, gauss) the enhanced-pretrained pipeline stays best.
 
+### Why does classical enhancement beat fine-tuning here?
+
+Enhancement is the best single repair on 7 of 9 cells. That is not an
+accident of tuning — four structural reasons stack in its favor in this
+benchmark, and knowing them tells you when the ranking would flip:
+
+1. **Information asymmetry: the restorer plays with oracle knowledge, the
+   fine-tuned model plays blind.** Each restorer receives the exact
+   degradation parameters logged at corruption time — the per-image noise
+   sigma (BM3D), the blur kernel size and angle (Wiener) — and inverts the
+   known forward model. The fine-tuned detector gets no side information:
+   one fixed set of weights must serve clean + 9 cells without being told
+   which one it is seeing. The benchmark measures how decisive this is:
+   remove the oracle (a blind kernel guess with a wrong angle) and
+   deconvolution scores *worse than no restoration at all*. The fair
+   statement is not "filters beat learning" but "**known degradation +
+   matched inverse** beats learning without that knowledge."
+2. **Enhancement moves the input back to the model's home distribution;
+   fine-tuning moves the model away from it.** The pretrained models were
+   trained on ~118k clean COCO images. Restoration pushes a corrupted image
+   back toward that distribution, so inference benefits from the full weight
+   of pretraining. Fine-tuning instead shifts the weights toward corrupted
+   data using only 9,000 images — and pays the measured −0.042 clean-mAP
+   tax for it. One approach recruits the entire pretraining corpus; the
+   other partially overwrites it with a dataset ~13× smaller.
+3. **These three corruptions are the textbook best case for classical
+   restoration.** Each is synthetic, spatially uniform, and has a simple
+   closed-form model: the median filter discards impulse outliers entirely
+   and returns a true neighboring value; BM3D is the strongest classical
+   AWGN denoiser; Wiener with the true kernel is the optimal linear inverse
+   for a known blur. Real-world corruptions — mixed, signal-dependent,
+   spatially varying, with unknown parameters — break all three model
+   assumptions, and that is exactly the regime where learned robustness
+   closes the gap.
+4. **Enhancement is model-agnostic; fine-tuning is per-model.** The same
+   enhanced images lift all four tasks — including keypoints and panoptic
+   segmentation, whose models were never fine-tuned at all — while
+   fine-tuning had to be trained for detection specifically, and splits the
+   limited capacity of a nano-scale detector across 19 training domains.
+
+And the two regimes where fine-tuning still earns its place, both visible in
+the table: when the corruption is **unknown or unparameterizable**,
+enhancement cannot even choose its filter (choosing wrong is harmful), while
+the fine-tuned model is the safe default — never more than 0.012 below the
+pretrained baseline, up to +0.124 in-domain; and when the damage is
+**partially irreversible** — heavy motion blur zeroes entire frequency bands
+that no deconvolution can bring back — the model's learned object priors
+compensate for what restoration mathematically cannot, which is why the
+stack wins motion_blur med/high.
+
+In one line: enhancement fights the corruption in *image space*, where it
+has a simple known model with 1–3 parameters; fine-tuning fights it in
+*weight space*, where the same corruption becomes a complex distribution
+shift. When the forward model is known and invertible, image space is the
+cheaper and stronger battlefield; the model side matters exactly where
+information is destroyed or the corruption is unknown.
+
 ### Clean baselines (Phase 1)
 
 | Task | Metric | Clean baseline |
