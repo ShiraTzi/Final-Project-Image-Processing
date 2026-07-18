@@ -367,6 +367,121 @@ def plot_annotated_grids(cfg: Dict, n: int = 3, score_thr: float = 0.35) -> None
         print(f"[viz] {out}")
 
 
+def plot_keypoint_grids(cfg: Dict, n: int = 2, score_thr: float = 0.35) -> None:
+    """Keypoint R-CNN predictions drawn on the images ("image with annotation"
+    for the keypoints task): skeleton + joint dots for each detected person,
+    clean / distorted (high severity) / enhanced, one figure per distortion.
+    Drawn from the existing prediction JSONs — no model inference needed."""
+    import matplotlib.patches as mpatches
+    from src.data import get_coco, load_subset_ids
+
+    # COCO 17-keypoint skeleton (0-indexed pairs)
+    SKELETON = [
+        (0, 1), (0, 2), (1, 3), (2, 4),          # head
+        (5, 6),                                    # shoulders
+        (5, 7), (7, 9), (6, 8), (8, 10),          # arms
+        (5, 11), (6, 12), (11, 12),                # torso
+        (11, 13), (13, 15), (12, 14), (14, 16),   # legs
+    ]
+    KP_COLOR  = "#f5c518"
+    LIMB_COLOR = "#e8e8e8"
+
+    ds = cfg["dataset"]
+    if not Path(ds["val_subset_file"]).exists():
+        print("[viz] no val subset yet; skipping keypoint grids")
+        return
+    coco_kp = get_coco(ds["ann_keypoints_val"])
+    preds_dir = Path(cfg["paths"]["preds_dir"])
+    figdir = _figdir(cfg)
+
+    # pick images with at least 2 persons with visible keypoints — richer scenes
+    ids_all = load_subset_ids(ds["val_subset_file"])
+    ids = [i for i in ids_all
+           if sum(1 for a in coco_kp.loadAnns(
+               coco_kp.getAnnIds(imgIds=i, iscrowd=False))
+               if a.get("num_keypoints", 0) >= 5) >= 2][:n]
+    if not ids:
+        print("[viz] no suitable person images for keypoint grids; skipping")
+        return
+
+    def _load_kp_preds(tag):
+        p = preds_dir / f"keypoints__{tag}.json"
+        if not p.exists():
+            return None
+        by_img: Dict[int, list] = {}
+        with open(p) as f:
+            for d in json.load(f):
+                if d.get("score", 0) >= score_thr:
+                    by_img.setdefault(d["image_id"], []).append(d)
+        return by_img
+
+    def _draw_kps(ax, img_path, preds, gt_anns, color):
+        ax.imshow(Image.open(img_path).convert("RGB"))
+        for a in gt_anns:                              # GT skeleton: gray dashed
+            kp = a["keypoints"]
+            for i, j in SKELETON:
+                xi, yi, vi = kp[3*i], kp[3*i+1], kp[3*i+2]
+                xj, yj, vj = kp[3*j], kp[3*j+1], kp[3*j+2]
+                if vi > 0 and vj > 0:
+                    ax.plot([xi, xj], [yi, yj], color=INK_MUTED,
+                            lw=1.0, ls="--", zorder=1)
+        for pred in preds or []:                       # predictions: skeleton + dots
+            kp = pred["keypoints"]
+            for i, j in SKELETON:
+                xi, yi, vi = kp[3*i], kp[3*i+1], kp[3*i+2]
+                xj, yj, vj = kp[3*j], kp[3*j+1], kp[3*j+2]
+                if vi > 0 and vj > 0:
+                    ax.plot([xi, xj], [yi, yj], color=LIMB_COLOR,
+                            lw=1.4, zorder=2)
+            for k in range(17):
+                x, y, v = kp[3*k], kp[3*k+1], kp[3*k+2]
+                if v > 0:
+                    ax.plot(x, y, "o", color=KP_COLOR, ms=4, zorder=3)
+        ax.axis("off")
+
+    clean_preds = _load_kp_preds("clean")
+    coco_inst = get_coco(ds["ann_instances_val"])
+    for dist, spec in cfg["distortions"].items():
+        sev = list(spec["severities"])[-1]
+        cols = [
+            ("clean",     "clean",     None,  f"Clean + Keypoint R-CNN"),
+            ("distorted", "distorted", dist,  f"Distorted ({dist}/{sev})"),
+            ("enhanced",  "enhanced",  dist,  "Enhanced"),
+        ]
+        preds_by_col = {}
+        for variant, _, d, _ in cols:
+            tag = "clean" if variant == "clean" else variant_tag(variant, dist, sev)
+            preds_by_col[variant] = (clean_preds if variant == "clean"
+                                     else _load_kp_preds(tag))
+        if preds_by_col["distorted"] is None:
+            continue
+        fig, axes = plt.subplots(len(ids), len(cols),
+                                 figsize=(4.5 * len(cols), 3.4 * len(ids)))
+        axes = axes[None, :] if len(ids) == 1 else axes
+        for row, image_id in enumerate(ids):
+            im = coco_kp.loadImgs(image_id)[0]
+            gt = coco_kp.loadAnns(coco_kp.getAnnIds(imgIds=image_id, iscrowd=False))
+            for col, (variant, img_variant, d, title) in enumerate(cols):
+                img_dir = variant_image_dir(
+                    cfg, img_variant,
+                    d, sev if d else None)
+                path = resolve_image_path(img_dir, im["file_name"])
+                preds = (preds_by_col[variant] or {}).get(image_id, [])
+                _draw_kps(axes[row, col], path, preds, gt, VARIANT_STYLE[
+                    "distorted" if variant == "clean" else variant]["color"])
+                if row == 0:
+                    axes[row, col].set_title(title, fontsize=10, color=INK)
+        fig.suptitle(
+            f"Keypoints on {dist}/{sev} — gray dashed = GT skeleton, "
+            f"white lines + yellow dots = predictions (score ≥ {score_thr})",
+            fontsize=11)
+        out = figdir / f"keypoints_{dist}.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=110)
+        plt.close(fig)
+        print(f"[viz] {out}")
+
+
 def plot_orb_match_grids(cfg: Dict, n: int = 2, max_draw: int = 60) -> None:
     """ORB matching visualized ("image with annotation" for the features task):
     clean-image keypoints matched against the distorted and the enhanced
@@ -587,6 +702,7 @@ def main() -> None:
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
     plot_annotated_grids(cfg)
+    plot_keypoint_grids(cfg)
     plot_orb_match_grids(cfg)
     plot_panoptic_grids(cfg)
 

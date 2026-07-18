@@ -357,6 +357,17 @@ corruption and reappear after each repair:
 ![annotated salt & pepper](results/figures/annotated_salt_pepper.png)
 ![annotated motion blur](results/figures/annotated_motion_blur.png)
 
+**Keypoint R-CNN predictions drawn on the images** — clean / distorted /
+enhanced for the same scenes. Gray dashed lines = GT skeleton (from the
+COCO keypoints annotation), white skeleton + yellow joint dots = predictions
+at score ≥ 0.35. Under heavy Gaussian noise or motion blur you can see the
+skeleton geometry degrade and joints drift off the body — the restoration
+pulls them back:
+
+![keypoints gauss noise](results/figures/keypoints_gauss_noise.png)
+![keypoints salt & pepper](results/figures/keypoints_salt_pepper.png)
+![keypoints motion blur](results/figures/keypoints_motion_blur.png)
+
 **Panoptic segmentation drawn on the images** — ground truth / clean /
 distorted (high severity) / enhanced, same scenes as above. Color = category
 (consistent across panels), white hairlines = segment boundaries, and each
