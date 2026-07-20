@@ -238,8 +238,10 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
     print(f"[viz] {out}")
 
 
-def plot_image_grids(cfg: Dict, n: int = 4) -> None:
-    """clean / distorted / enhanced grid for the first n subset images per distortion."""
+def plot_image_grids(cfg: Dict, n: int = 4,
+                     exclude_ids: "set | None" = None) -> None:
+    """clean / distorted / enhanced grid for n subset images per distortion.
+    Pass exclude_ids to avoid showing images already used in annotation grids."""
     from pycocotools.coco import COCO
     from src.data import load_subset_ids
 
@@ -248,7 +250,9 @@ def plot_image_grids(cfg: Dict, n: int = 4) -> None:
         print("[viz] no val subset yet; skipping image grids")
         return
     coco = COCO(ds["ann_instances_val"])
-    ids = load_subset_ids(ds["val_subset_file"])[:n]
+    _excl = exclude_ids or set()
+    all_ids = load_subset_ids(ds["val_subset_file"])
+    ids = [i for i in all_ids if i not in _excl][:n]
     names = [coco.loadImgs(i)[0]["file_name"] for i in ids]
     figdir = _figdir(cfg)
 
@@ -365,6 +369,7 @@ def plot_annotated_grids(cfg: Dict, n: int = 3, score_thr: float = 0.35) -> None
         fig.savefig(out, dpi=110)
         plt.close(fig)
         print(f"[viz] {out}")
+    return ids
 
 
 def plot_keypoint_grids(cfg: Dict, n: int = 2, score_thr: float = 0.35) -> None:
@@ -480,6 +485,7 @@ def plot_keypoint_grids(cfg: Dict, n: int = 2, score_thr: float = 0.35) -> None:
         fig.savefig(out, dpi=110)
         plt.close(fig)
         print(f"[viz] {out}")
+    return ids
 
 
 def plot_orb_match_grids(cfg: Dict, n: int = 2, max_draw: int = 60) -> None:
@@ -564,6 +570,7 @@ def plot_orb_match_grids(cfg: Dict, n: int = 2, max_draw: int = 60) -> None:
         fig.savefig(out, dpi=110)
         plt.close(fig)
         print(f"[viz] {out}")
+    return ids
 
 
 def plot_panoptic_grids(cfg: Dict, n: int = 2, alpha: float = 0.55) -> None:
@@ -689,6 +696,7 @@ def plot_panoptic_grids(cfg: Dict, n: int = 2, alpha: float = 0.55) -> None:
         fig.savefig(out, dpi=110)
         plt.close(fig)
         print(f"[viz] {out}")
+    return ids
 
 
 def main() -> None:
@@ -700,11 +708,14 @@ def main() -> None:
     plot_recovery_bars(cfg)
     plot_per_class_ap(cfg)
     plot_per_class_comparison(cfg)
-    plot_image_grids(cfg)
-    plot_annotated_grids(cfg)
-    plot_keypoint_grids(cfg)
-    plot_orb_match_grids(cfg)
-    plot_panoptic_grids(cfg)
+    # Run annotation grids first so we know which images they used,
+    # then give the raw grid a disjoint set of images.
+    ann_ids  = plot_annotated_grids(cfg) or []
+    kp_ids   = plot_keypoint_grids(cfg) or []
+    orb_ids  = plot_orb_match_grids(cfg) or []
+    pan_ids  = plot_panoptic_grids(cfg) or []
+    used_ids = set(ann_ids) | set(kp_ids) | set(orb_ids) | set(pan_ids)
+    plot_image_grids(cfg, exclude_ids=used_ids)
 
 
 if __name__ == "__main__":

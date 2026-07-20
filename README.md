@@ -1,309 +1,199 @@
-# Final-Project-Image-Processing
+# Final Project Report — Image Processing and Computer Vision
 
-**Team:** Ohad Shpizhizen · Shira Tziony
-
-Robustness benchmark for image-processing / vision methods under image
-distortion, on the **COCO** dataset. For each task we measure a **clean
-baseline**, the **degradation** under three corruptions at multiple severities,
-and the **recovery** from two improvement strategies (classical **enhancement**
-and model **fine-tuning**), reported per class / category and as a function of
-**SNR**.
+**Team Members:**  
+Ohad Shpizhizen (oshpizhizen@nvidia.com)  
+Shira Tziony (shira.tziony@gmail.com)  
+**GitHub Repository:** [Final-Project-Image-Processing](https://github.com/ShiraTzi/Final-Project-Image-Processing)
 
 ---
 
-## Course-project pipeline (phases)
+## Overview
 
-The project follows the course's required workflow. Each phase has a single
-runnable entry point (see [How to run each phase](#how-to-run-each-phase)).
+This project systematically benchmarks the robustness of modern image-processing and computer vision algorithms to realistic image corruptions, using the COCO dataset. We:
 
-| Phase | What it does | Entry point |
+- Establish a **clean baseline** for four key vision tasks (feature matching, object detection, keypoint detection, panoptic segmentation)
+- Quantify **performance degradation** when images are subjected to three types of distortions (Gaussian noise, salt-and-pepper, motion blur) at three levels of severity each
+- Evaluate two recovery strategies: classical **image enhancement** (non-blind restoration via BM3D, median filter, Wiener deconvolution) and deep **model fine-tuning**
+- Report results as a function of distortion type/severity, signal-to-noise ratio (SNR), and per-class and per-task performance
+
+---
+
+## Project Pipeline
+
+The experimental workflow follows a five-phase structure:
+
+| Phase | Description | Entry Point |
 |---|---|---|
-| **0 — Setup & Data** | build the two virtualenvs; download COCO annotations + subset images (+ panoptic GT) | `src.data` |
-| **1 — Clean baseline** | run all models on clean images, compute baseline metrics | `--only infer eval` (clean) |
-| **2 — Distortion** | generate distorted images (3 corruptions × 3 severities) + SNR; measure degradation | `src.distortions` → infer → eval |
-| **3 — Enhancement** | restore distorted images (matched denoise/deblur); measure recovery | `src.enhancement` → infer → eval |
-| **4 — Fine-tuning** | fine-tune YOLOv8 on a clean+distorted mixture (real GT); re-evaluate on clean/distorted/enhanced | `src.finetune_det` |
-| **5 — Report** | comparison tables, per-class plots, accuracy-vs-SNR curves | `src.tables`, `src.visualize` |
+| 0 — Setup & Data      | Build environments, download COCO data/subset/panoptic GT | `src.data` |
+| 1 — Clean Baseline    | Run all models on clean images, validate baseline metrics | `--only infer eval` |
+| 2 — Distortion        | Generate distorted images (3 corruptions × 3 severities), log SNR | `src.distortions` → infer → eval |
+| 3 — Enhancement       | Apply matched restoration filters, assess recovery          | `src.enhancement` → infer → eval |
+| 4 — Fine-tuning       | Fine-tune YOLOv8n on a mixture of clean/distorted/restored data | `src.finetune_det` |
+| 5 — Reporting         | Aggregate and visualize results, create tables/plots        | `src.tables`, `src.visualize` |
 
+Pipeline schematic:
 ```
-data ──► distort ──► enhance ──┐
-  │          │          │       ├─► infer ─► eval ─► tables/figures
-  └──────────┴──────────┴───────┘            ▲
-                          finetune (YOLOv8) ──┘
+Evaluation:
+COCO images ──► inference ──► evaluation
+COCO images ──► distortion ──► inference ──► evaluation
+COCO images ──► distortion ──► enhancement ──► inference ──► evaluation
+
+Fine-tuning:
+Training mixture ──► fine-tune YOLOv8 ──► inference ──► evaluation
+
+All evaluations ──► tables and figures
 ```
 
-## Tasks and models
-Four tasks spanning low-level and high-level vision:
+---
 
-| Task | Model / algorithm | Stack | Metric |
+## The Dataset
+
+### What is COCO?
+
+**COCO (Common Objects in Context)** is a large-scale computer-vision benchmark introduced by Lin et al. It contains approximately 330,000 images, of which more than 200,000 are labeled, and covers 80 object categories. Its task-specific annotations include object bounding boxes, instance segmentation masks, 17-keypoint skeletons for people, and panoptic segmentation labels.
+
+We use the **val2017** split (5,000 images) as our evaluation pool. It has public ground-truth annotations and is widely used for reporting benchmark results, allowing us to compare our clean baselines with published model scores.
+
+### Why COCO?
+
+- **Multiple tasks on the same image set.** Detection, person-keypoint, and panoptic annotations can be evaluated on one fixed image subset without cross-dataset alignment. ORB feature matching does not use COCO ground truth; it uses each clean image as its reference.
+- **Standardized evaluation tools.** The official COCO API computes detection AP and keypoint OKS AP, while the official Panoptic API computes PQ. This makes our evaluation reproducible and uses the same metric definitions as published COCO results. Because we evaluate on a custom 1,521-image subset, absolute scores are not directly comparable with results reported on the full val2017 split.
+- **All three learned models are COCO-pretrained.** YOLOv8n, Keypoint R-CNN, and Panoptic FPN ship with weights trained on COCO train2017. Their clean baselines can therefore be used as an approximate sanity check against published full-val2017 scores, rather than as an exact comparison.
+- **Class diversity.** 80 categories across people, animals, vehicles, household objects, and outdoor scenes ensure our per-class degradation analysis is meaningful and not dominated by a single domain.
+
+### Our Subset
+
+A **fixed, seeded subset of 1,521 images** is the single source of truth for every experiment variant. It is a seeded random sample of 1,500 images **topped up with 21 images for class coverage**: after the initial sample, images are added (in the same shuffled order) until every category reaches a minimum GT instance count, bounded by what val2017 contains. This prevents per-class AP from being dominated by rare categories with only 2–3 instances.
+
+**Exact evaluation dataset:** [the complete list of 1,521 COCO image IDs used in every experiment](data/splits/val_subset.json), sampled from the official [COCO val2017 dataset](https://cocodataset.org/#download).
+
+| Property | Value |
+|---|---|
+| Subset size | 1,521 images |
+| GT instances | 11,129 total; 3,273 person instances |
+| Class correlation with full val2017 | r = 0.999 |
+| Minimum instances per class | ≥ 20 (except `toaster` = 9, `hair drier` = 11 — both exhaust their entire val2017 supply) |
+| All comparisons | Paired: identical images and GT across every variant |
+
+A separate seeded **9,000-image train2017 subset** is used only for fine-tuning; its exact image IDs are listed in [data/splits/train_subset.json](data/splits/train_subset.json). Panoptic PQ additionally requires the COCO panoptic GT (~821 MB, fetched automatically).
+
+---
+
+## Selected Tasks
+
+Four tasks covering both low-level signal analysis and high-level scene understanding:
+
+| Task | Level | Model / Algorithm | Library | Metric |
+|---|---|---|---|---|
+| Feature matching | **Low-level** | ORB + BFMatcher (Hamming, cross-check) | OpenCV | Match ratio vs clean |
+| Object detection | **High-level** | YOLOv8n (COCO-pretrained) | ultralytics | mAP@[.5:.95] |
+| Keypoint detection | **High-level** | Keypoint R-CNN ResNet50-FPN (COCO-pretrained) | torchvision | OKS AP |
+| Panoptic segmentation | **High-level** | Panoptic FPN R50 (COCO-pretrained) | detectron2 | PQ = SQ × RQ |
+
+All metrics are in the range [0, 1]; higher is better.
+
+### Feature Matching — ORB (Low-level)
+
+**What it does:** ORB (Oriented FAST and Rotated BRIEF) detects corner-like keypoints and computes compact binary descriptors. We run ORB on the clean image and the degraded or restored variant, then match with a Brute-Force Matcher using Hamming distance and cross-check. For each image, the **match ratio** is the number of matches with Hamming distance ≤ 64 divided by the number of keypoints in the clean image; the reported score is the mean ratio across the evaluation subset. A score of 1.0 means every clean feature was matched; 0 means none were matched. No ground-truth annotations are needed — the clean image itself is the reference.
+
+**Justification and caveat:** As the only low-level task, ORB measures whether local image structure survives corruption, complementing the three ground-truth-based semantic tasks. Its binary descriptors are sensitive to noise and blur, and the method runs quickly on CPU. However, because the clean image is the reference, an enhancement that changes texture can lower the ORB score even when it improves detection, keypoints, or segmentation.
+
+### Object Detection — YOLOv8n (High-level)
+
+**What it does:** YOLOv8n (nano variant) is a real-time, single-stage object detector. Given an image it predicts bounding boxes and class labels for all 80 COCO categories simultaneously. It is scored with **mAP@[.5:.95]**: the area under the interpolated precision–recall curve, averaged over all 80 classes and 10 bounding-box IoU thresholds from 0.50 to 0.95. This is deliberately strict — it rewards both detecting and tightly localizing objects.
+
+**Justification:** Object detection is the most canonical high-level vision task and one of the most widely benchmarked for robustness. YOLOv8n is fast enough to run the full 1,521-image subset without excessive GPU time. Its published full-val2017 mAP (~0.373) provides an approximate sanity check for our clean baseline, not a direct comparison because we use a custom subset. Detection is the only task for which we apply fine-tuning, making it the focal point of the enhancement-vs-fine-tuning comparison.
+
+### Keypoint Detection — Keypoint R-CNN (High-level)
+
+**What it does:** Keypoint R-CNN (ResNet50-FPN backbone, COCO-pretrained) localizes 17 human body joints — shoulders, elbows, wrists, hips, knees, ankles, eyes, ears, and nose — per detected person instance. It is scored with **OKS AP**: the standard AP calculation with bounding-box IoU replaced by Object Keypoint Similarity. OKS measures the distance between predicted and ground-truth joints, normalizes it by person scale, includes only labeled joints, and applies a COCO-defined tolerance for each joint type. AP is averaged over 10 OKS thresholds from 0.50 to 0.95.
+
+**Justification:** Keypoints probe a fundamentally different sensitivity than bounding-box detection. A corruption that merely blurs edges may not harm detection much but can cause predicted joint positions to drift significantly, because joint localization requires resolving subtle local appearance cues. The detection–vs–keypoints contrast is one of the most informative dimensions of this benchmark.
+
+### Panoptic Segmentation — Panoptic FPN (High-level)
+
+**What it does:** Panoptic FPN (Feature Pyramid Network with ResNet-50 backbone, COCO-pretrained via detectron2) assigns each evaluated pixel a semantic category and segment identity. It handles both "things" (countable objects: cars, people, …) and "stuff" (amorphous regions: sky, grass, road, …). It is scored with **PQ = SQ × RQ**. Predicted and ground-truth segments of the same category are matched when IoU > 0.5; **SQ** is their mean IoU, while **RQ = TP / (TP + 0.5 FP + 0.5 FN)** measures segment recognition. PQ decreases when segments are missed, falsely predicted, or imprecisely bounded.
+
+**Justification:** Panoptic segmentation adds dense, pixel-level scene understanding to the benchmark, complementing bounding-box detection and person keypoints. It tests whether corruption damages object recognition, instance separation, semantic "stuff" classification, and mask boundaries, making it the broadest high-level task in the project.
+
+**Diagnostic value:** The PQ decomposition separates recognition failures from boundary-quality failures: lower RQ indicates missing or false segments, while lower SQ indicates less accurate masks for correctly matched segments. This distinction was essential in diagnosing the v2 NLM failure (see Appendix).
+
+**Implementation note:** Panoptic FPN runs in a separate virtual environment because detectron2 requires a different PyTorch version; the pipeline invokes it automatically as a subprocess.
+
+---
+
+## Selected Noises
+
+Three corruption types are applied at **three severities** (low / medium / high). Each `(image, distortion, severity)` combination is reproducible: its random-number generator is seeded with a stable CRC32 digest of the global seed, image ID, distortion type, and severity. Distorted and enhanced images are stored as **lossless PNG** so JPEG compression does not alter the generated corruption.
+
+For every image variant, `results/metrics/snr_index.csv` records the measured SNR (dB) and degradation parameters at the precision used by the restoration stage: Gaussian-noise variance, impulse amount, and blur-kernel size and angle. BM3D derives its noise sigma from the recorded variance, while Wiener deconvolution reconstructs the corresponding blur kernel. This enables matched, **non-blind restoration** instead of estimating the degradation from the corrupted image.
+
+| Distortion | What it models | How it is applied | Enhancement method |
 |---|---|---|---|
-| Feature matching (**low-level**) | **ORB** + BFMatcher (Hamming, cross-check) | OpenCV | match ratio vs clean (good matches / clean keypoints) |
-| Object detection | **YOLOv8n** (COCO-pretrained) | ultralytics | COCOeval bbox mAP |
-| Keypoint detection | **Keypoint R-CNN** ResNet50-FPN (COCO-pretrained) | torchvision | COCOeval keypoints (OKS) |
-| Panoptic segmentation | **Panoptic FPN** R50 (COCO-pretrained) | detectron2 | Panoptic Quality (PQ/SQ/RQ) |
+| **Gaussian noise** | Sensor / intensity noise | Additive white Gaussian noise; variance sampled and recorded per image | Non-blind **BM3D** using sigma derived from the recorded variance |
+| **Salt-and-pepper** | Impulsive pixel corruption | Random pixel locations set to 0 or 255; configured amount recorded | **Median filter** (3×3) |
+| **Motion blur** | Global camera-motion blur | Whole-image convolution with a linear kernel; size and angle recorded | Non-blind **Wiener deconvolution** with the reconstructed kernel |
 
-**What each task does, and how to read its metric** (all metrics are 0–1,
-higher is better):
+### Gaussian Noise
 
-- **Feature matching (ORB)** — the low-level question: does the raw *signal*
-  still carry the same local structure? ORB detects corner-like keypoints with
-  binary descriptors on the clean image and on the degraded/restored one; the
-  **match ratio** is the fraction of clean keypoints that find a good match
-  (Hamming distance ≤ 64, cross-checked) in the other image. 1.0 = every clean
-  feature survives; 0 = local structure destroyed. Needs no ground truth — the
-  clean image itself is the reference.
-- **Object detection (YOLOv8n)** — find every object and its bounding box.
-  Scored with COCO **mAP@[.5:.95]**: average precision, averaged over 10 IoU
-  thresholds (0.50…0.95) and over the 80 classes. Deliberately strict — it
-  rewards both *finding* the object and localizing it *tightly*, so it reacts
-  to corruption earlier than a loose "did we detect something" measure.
-- **Keypoint detection (Keypoint R-CNN)** — locate 17 human body joints per
-  person. Scored with **OKS AP**: the same AP machinery, but box-IoU is
-  replaced by Object Keypoint Similarity — a scale-normalized distance between
-  predicted and true joints. Person-only, so it isolates how corruption
-  affects *fine* spatial localization.
-- **Panoptic segmentation (Panoptic FPN)** — assign every pixel a class and an
-  instance id ("things" like cars *and* "stuff" like sky/road). Scored with
-  **PQ = SQ × RQ**: RQ (recognition quality) is the F1 of correctly matched
-  segments, SQ (segmentation quality) is the mean IoU of the matched ones — so
-  PQ drops both when whole segments are missed and when masks get sloppy.
+**What it is:** Additive white Gaussian noise (AWGN) approximates signal-independent noise from sources such as sensor electronics and analog-to-digital conversion. Each pixel channel receives an independent Gaussian perturbation. The variance is sampled per image and recorded; sigma is its square root. Mean measured SNR: ~19.5 dB (low) / ~13.9 dB (medium) / ~10.0 dB (high).
 
-> Object detection is fine-tuned (Phase 4) as the deep-learning improvement.
-> Panoptic FPN runs in a **separate virtualenv** (detectron2 needs a different
-> torch) — the pipeline calls it as a subprocess; everything else is automatic.
+**Enhancement — Non-blind BM3D:** BM3D (Block-Matching 3D) is an established classical AWGN denoiser. It groups similar image patches, filters them collaboratively in a 3D transform domain, and aggregates the restored patches. We derive sigma from the recorded variance, allowing BM3D's strength to match the generated noise level instead of estimating it from the corrupted image. BM3D replaced the v2 NLM method after NLM reduced ORB, keypoint, and panoptic performance (see Appendix).
 
-## Distortions
-Three corruptions (main-branch choice), each at **3 severities** (low/med/high),
-applied to the fixed subset; deterministic per image (numpy/cv2, seeded via a
-stable CRC32 digest so every rerun and every process reproduces the identical
-corruption). Distorted and enhanced images are stored as **lossless PNG** — a
-JPEG round-trip would re-shape the corruption itself (it partially denoises
-Gaussian noise and smears salt-and-pepper impulses). Per image,
-`results/metrics/snr_index.csv` records the SNR (dB) **and the exact sampled
-degradation parameters** (noise variance / impulse fraction / blur kernel size
-and angle) — the logged parameters are what make non-blind restoration possible.
+**Why chosen:** AWGN is a standard signal-processing noise model with a simple, controlled forward process. It provides a clear test of matched denoising and a useful contrast with sparse impulse noise and spatial blur.
 
-| Distortion | Models | Matched enhancement (Phase 3) |
-|---|---|---|
-| **Gaussian noise** | sensor / intensity noise | non-blind **BM3D** fed the logged per-image noise sigma (v2 used sigma-adaptive NLM — replaced after it measurably *hurt* the pixel-precise tasks; diagnosis + old numbers in [docs/archive/](docs/archive/v2_nlm_gauss_enhance.md)) |
-| **Salt-and-pepper** | impulsive pixel corruption | median filter |
-| **Motion blur** | camera shake / object motion | non-blind Wiener deconvolution with the logged blur kernel |
+### Salt-and-Pepper Noise
 
-## Dataset
-COCO **val2017**, a **fixed seeded subset of ~1500 images** (single source of
-truth: every variant runs on exactly these image-ids, sharing identical ground
-truth). The subset is a seeded random sample **topped up for class coverage**:
-after sampling, images are added (in the same shuffled order) until every
-category reaches ≥ `val_min_class_instances` GT instances (bounded by its
-availability in val2017) — so per-class AP is not dominated by 5-instance
-classes. A seeded **9,000-image train2017 subset** is used only for fine-tuning.
-Only subset images are downloaded (via each image's `coco_url`); panoptic PQ
-additionally needs the COCO panoptic GT (~821MB, fetched automatically when the
-segmentation task is enabled).
+**What it is:** Impulsive corruption in which randomly selected pixel locations are replaced with either 0 (black) or 255 (white). It approximates effects such as sensor defects or transmission errors. The configured amount is fixed by severity (1% / 5% / 12%), while the affected locations are sampled independently for each image. Mean measured SNR: ~18.7 dB (low) / ~11.8 dB (medium) / ~8.2 dB (high).
+
+**Enhancement — Median filter:** A 3×3 median filter replaces each channel value with the median of its local neighborhood. It suppresses isolated extreme values and generally preserves edges better than an averaging filter, although it can still remove fine detail.
+
+**Why chosen:** Salt-and-pepper noise is qualitatively different from AWGN: its perturbations are sparse and extreme rather than continuous. The strong measured recovery from median filtering demonstrates how well a simple matched filter can work when the corruption model is known.
+
+### Motion Blur
+
+**What it is:** Global linear motion blur is produced by convolving the whole image with a directional kernel, approximating camera motion during exposure. Kernel size is fixed by severity (5 / 11 / 21 pixels), while its angle is sampled per image. The recorded size and angle allow the kernel to be reconstructed for restoration. Mean measured SNR: ~20.8 dB (low) / ~17.7 dB (medium) / ~15.6 dB (high).
+
+**Enhancement — Non-blind Wiener deconvolution:** We reconstruct the blur kernel from its recorded parameters and apply frequency-domain Wiener deconvolution with fixed regularization (`NSR = 0.02`). This approximately inverts the blur while limiting amplification near frequencies suppressed by the kernel. In our earlier test, using an incorrect kernel angle performed worse than no restoration, showing that deconvolution is sensitive to kernel mismatch.
+
+**Why chosen:** Motion blur occupies a fundamentally different regime from the noise corruptions: it destroys high-frequency spatial information (edges, fine texture, sharp boundaries) rather than adding noise. Despite its *higher* SNR than the noise corruptions at comparable severity, it causes the most damage to localization-sensitive tasks (ORB match ratio −0.80, OKS AP −0.50 at high severity) — demonstrating that SNR alone does not predict task damage.
 
 ---
 
 ## Results
 
-All numbers are on the fixed 1,521-image, class-coverage-balanced COCO val2017
-subset. Full per-cell
-table: [results/metrics/comparison.md](results/metrics/comparison.md) /
-[`comparison.csv`](results/metrics/comparison.csv); long format with every
-metric in [`summary_long.csv`](results/metrics/summary_long.csv).
+All numbers are on the fixed 1,521-image, class-coverage-balanced COCO val2017 subset.  
+Full per-cell tables: [results/metrics/comparison.md](results/metrics/comparison.md) / [comparison.csv](results/metrics/comparison.csv)  
+Long format with every metric: [results/metrics/summary_long.csv](results/metrics/summary_long.csv)
 
-### The headline: matched *non-blind* restoration recovers most of the damage on every corruption
+### Clean Baselines — Phase 1
 
-The project's main result in one figure — the **actual metric values** after
-each repair, per distortion × severity cell, one panel per task. Blue = the
-damaged score, green/amber = after classical enhancement / fine-tuning, the
-dashed line = the clean baseline, and each label is the **share of the damage
-that the repair recovered**. The median filter rescues **80–91%** of the
-impulse-noise damage for detection (74–86% for segmentation); non-blind
-Wiener deconvolution — possible because the benchmark logs each image's blur
-kernel — recovers **25–68%** of the motion-blur damage that a blind sharpening
-filter couldn't touch (0–9% in the archived v1 run); and non-blind **BM3D**
-fed the logged per-image noise sigma recovers **67–74%** of the Gaussian-noise
-damage for detection (38–53% for keypoints/segmentation) — the corruption
-where v2's NLM denoiser had *negative* recovery on every pixel-precise task:
+| Task | Metric | Our 1,521-image subset | Published full val2017 | Difference |
+|---|---|---:|---:|---:|
+| Feature matching (ORB) | Match ratio | 1.000 | — | — |
+| Object detection (YOLOv8n) | mAP@[.5:.95] | 0.352 | [0.373](https://docs.ultralytics.com/models/yolov8/#performance-metrics) | −0.021 |
+| Keypoint detection (Keypoint R-CNN) | OKS AP | 0.657 | [0.650](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.detection.keypointrcnn_resnet50_fpn.html) | +0.007 |
+| Panoptic segmentation (Panoptic FPN) | PQ | 0.410 | [0.415](https://github.com/facebookresearch/detectron2/blob/main/MODEL_ZOO.md#coco-panoptic-segmentation-baselines-with-panoptic-fpn) | −0.005 |
 
-![recovery per cell](results/figures/recovery_bars.png)
+Difference is our subset score minus the published full-val2017 score. ORB's clean score is 1.000 by construction because each clean image is matched with itself. The learned-model differences range from −0.021 to +0.007 (−2.1 to +0.7 metric points). Because the image sets differ, these values are an approximate sanity check—not a direct benchmark replication—and indicate no obvious issue in annotation handling, format conversion, or evaluation.
 
-The same story per object class, on the gauss_noise/high cell: BM3D denoising
-(green) now recovers a large share of the clean AP (gray) across the board,
-with the fine-tuned detector (amber) as the model-side repair:
+For the clean Panoptic FPN baseline, the additional category-averaged metrics are SQ = 0.775, RQ = 0.500, PQ things = 0.475, and PQ stuff = 0.312.
 
-![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
+---
 
-### Key findings
+### Full Comparison Table — Clean vs Distorted vs Enhanced vs Fine-tuned
 
-- **Degradation tracks SNR monotonically for every task** — each severity step
-  lowers SNR and performance together (see the per-SNR curves below).
-  Motion blur is the most destructive corruption for localization-heavy tasks
-  (keypoints −0.50, ORB −0.80 at high severity) even though its SNR is *higher*
-  than the noise corruptions' — SNR alone does not fully predict task damage.
-- **Classical enhancement works exactly where the restoration matches the
-  *degradation model* — and with the right filter, every corruption here has a
-  match.** The median filter essentially rescues salt-and-pepper for every
-  task (detection 0.079 → 0.321, PQ 0.105 → 0.348, OKS AP 0.348 → 0.598 at
-  high severity). Wiener deconvolution with the *logged* kernel repairs motion
-  blur (detection 0.157 → 0.257 at med severity; ORB 0.20 → 0.48 at high) — a
-  blind kernel guess measured *worse than no restoration at all*. Gaussian
-  noise needed the same non-blind treatment: **BM3D fed the logged sigma**
-  lifts every task at every severity (detection 0.097 → 0.269, OKS 0.369 →
-  0.479, PQ 0.209 → 0.299 at high; even the smoothing-penalized ORB score goes
-  *up*), landing detection at gauss/low within 0.016 of the clean baseline.
-- **The v2 negative result was the *filter*, not the idea — and the diagnosis
-  is a finding in itself.** v2's sigma-adaptive NLM scored *below* the raw
-  noisy images on every pixel-precise task. Three measurements located the
-  failure: NLM output kept *more* high-frequency energy than the clean image
-  (blotchy residual noise) while flattening true texture; the damage
-  concentrated on small objects (detection small-AP fell while large-AP rose)
-  and on texture-defined *stuff* classes (panoptic RQ collapsed while SQ
-  barely moved — whole segments went missing, not sloppy masks). BM3D's
-  collaborative patch filtering removes ~4–5 dB more noise while *keeping*
-  that texture, which flips all 12 gauss cells positive. Full diagnosis:
-  [docs/archive/v2_nlm_gauss_enhance.md](docs/archive/v2_nlm_gauss_enhance.md).
-- **Fine-tuning on a clean-heavy, restoration-aware mixture is robust across
-  the board.** Trained on a per-image mix of 25% clean + the 9 corruption
-  cells, half of the corrupted picks passed through their matched classical
-  restorer (9,000 train2017 images, real GT), YOLOv8n improves every med/high
-  cell (salt_pepper/high +0.124, gauss_noise/high +0.086) and is at worst
-  −0.012 on the near-clean low-severity cells. The v1 single-cell training
-  (archived in [docs/archive/](docs/archive/)) had shown textbook negative
-  transfer; the v2 mixture (10% clean, no restored images, archived likewise)
-  fixed that but lost to *doing nothing* on all low-severity cells.
-- **Robustness costs clean accuracy, and now it's measured — and reduced:**
-  the fine-tuned model scores **0.310 on clean images vs 0.352 pretrained**
-  (−0.042; v2's 10%-clean mixture cost −0.068). Raising the clean share of
-  the training mix from 10% to 25% bought back ~40% of the forgetting at no
-  loss on the med/high cells.
-- **Stacking the two repairs is now additive** — training on restored images
-  removed v2's domain mismatch (v2's fine-tuned model scored *below* the
-  pretrained one on median-filtered images at every severity). The stack
-  improved on all 9 cells and is the best strategy where each repair alone is
-  partial: motion_blur/med 0.261 and motion_blur/high 0.189 (a 45% recovery
-  vs 25%/18% for either repair alone). Where restoration is near-total
-  (salt & pepper, gauss) the enhanced-pretrained pipeline stays best.
+Each row is one experimental cell: the same model and the same 1,521 val images — only image quality changes.
 
-### Why does classical enhancement beat fine-tuning here?
-
-Enhancement is the best single repair on 7 of 9 cells. That is not an
-accident of tuning — four structural reasons stack in its favor in this
-benchmark, and knowing them tells you when the ranking would flip:
-
-1. **Information asymmetry: the restorer plays with oracle knowledge, the
-   fine-tuned model plays blind.** Each restorer receives the exact
-   degradation parameters logged at corruption time — the per-image noise
-   sigma (BM3D), the blur kernel size and angle (Wiener) — and inverts the
-   known forward model. The fine-tuned detector gets no side information:
-   one fixed set of weights must serve clean + 9 cells without being told
-   which one it is seeing. The benchmark measures how decisive this is:
-   remove the oracle (a blind kernel guess with a wrong angle) and
-   deconvolution scores *worse than no restoration at all*. The fair
-   statement is not "filters beat learning" but "**known degradation +
-   matched inverse** beats learning without that knowledge."
-2. **Enhancement moves the input back to the model's home distribution;
-   fine-tuning moves the model away from it.** The pretrained models were
-   trained on ~118k clean COCO images. Restoration pushes a corrupted image
-   back toward that distribution, so inference benefits from the full weight
-   of pretraining. Fine-tuning instead shifts the weights toward corrupted
-   data using only 9,000 images — and pays the measured −0.042 clean-mAP
-   tax for it. One approach recruits the entire pretraining corpus; the
-   other partially overwrites it with a dataset ~13× smaller.
-3. **These three corruptions are the textbook best case for classical
-   restoration.** Each is synthetic, spatially uniform, and has a simple
-   closed-form model: the median filter discards impulse outliers entirely
-   and returns a true neighboring value; BM3D is the strongest classical
-   AWGN denoiser; Wiener with the true kernel is the optimal linear inverse
-   for a known blur. Real-world corruptions — mixed, signal-dependent,
-   spatially varying, with unknown parameters — break all three model
-   assumptions, and that is exactly the regime where learned robustness
-   closes the gap.
-4. **Enhancement is model-agnostic; fine-tuning is per-model.** The same
-   enhanced images lift all four tasks — including keypoints and panoptic
-   segmentation, whose models were never fine-tuned at all — while
-   fine-tuning had to be trained for detection specifically, and splits the
-   limited capacity of a nano-scale detector across 19 training domains.
-
-And the two regimes where fine-tuning still earns its place, both visible in
-the table: when the corruption is **unknown or unparameterizable**,
-enhancement cannot even choose its filter (choosing wrong is harmful), while
-the fine-tuned model is the safe default — never more than 0.012 below the
-pretrained baseline, up to +0.124 in-domain; and when the damage is
-**partially irreversible** — heavy motion blur zeroes entire frequency bands
-that no deconvolution can bring back — the model's learned object priors
-compensate for what restoration mathematically cannot, which is why the
-stack wins motion_blur med/high.
-
-In one line: enhancement fights the corruption in *image space*, where it
-has a simple known model with 1–3 parameters; fine-tuning fights it in
-*weight space*, where the same corruption becomes a complex distribution
-shift. When the forward model is known and invertible, image space is the
-cheaper and stronger battlefield; the model side matters exactly where
-information is destroyed or the corruption is unknown.
-
-### Clean baselines (Phase 1)
-
-| Task | Metric | Clean baseline |
-|---|---|---:|
-| Feature matching (ORB) | match ratio | 1.000 |
-| Object detection (YOLOv8n) | mAP@[.5:.95] | 0.352 |
-| Keypoint detection (Keypoint R-CNN) | OKS AP | 0.657 |
-| Panoptic segmentation (Panoptic FPN) | PQ | 0.410 (SQ 0.775 / RQ 0.500; things 0.475 / stuff 0.312) |
-
-All three pretrained models land within ~0.02 of their published full-val2017
-scores, which validates the measurement pipeline itself (GT handling, format
-conversions, COCOeval) before any distortion enters the picture.
-
-### Degradation per SNR (Phase 2)
-
-Performance vs SNR — one panel per distortion, shared y-axis. Series identity is
-fixed across all panels: distorted (blue, solid, ●), enhanced (green, dashed, ■),
-fine-tuned (amber, dotted, ▲); the clean baseline is the gray dashed line. The
-repaired lines flatten the SNR slope — the harder the corruption, the larger
-the gap they open over the distorted line — and the green enhanced line stays
-near the clean baseline across all three corruptions:
-
-![detection vs SNR](results/figures/acc_vs_snr_detection.png)
-![features vs SNR](results/figures/acc_vs_snr_features.png)
-![keypoints vs SNR](results/figures/acc_vs_snr_keypoints.png)
-![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
-
-Per-class AP of the clean detection baseline (strongest classes, with subset
-GT counts):
-
-![per-class AP clean](results/figures/per_class_ap_clean.png)
-
-### The full numbers — clean vs distorted vs enhanced vs fine-tuned (Phases 2–4)
-
-Each row is one experimental cell: the same model, the same 1,521 val images
-and ground truth — only the image quality changes. **How to read the columns:**
-
-- **SNR (dB)** — measured signal-to-noise ratio of the distorted images vs the
-  clean ones (lower = more corrupted).
-- **clean** — the task metric on the original images (the baseline; constant
-  per task). Metrics: detection = bbox mAP@[.5:.95], features = ORB match
-  ratio, keypoints = OKS AP, segmentation = PQ. All 0–1, higher is better.
-- **distorted** — the same metric on the corrupted images.
-- **enhanced** — the metric after the matched classical restoration
-  (non-blind BM3D with the logged sigma for Gaussian noise, median filter for
-  salt & pepper, non-blind Wiener deconvolution for motion blur).
-- **finetuned** — the fine-tuned YOLOv8n (detection only, the DL improvement;
-  **trained on a per-image mixture of 25% clean + all 9 cells, half of the
-  corrupted picks classically restored**, evaluated on all cells). On clean
-  images it scores **0.310** vs the pretrained 0.352 — the measured price of
-  robustness.
-- **finetuned+enh** — the fine-tuned detector running on the *enhanced*
-  images: both repairs stacked (the deployment pipeline when the corruption
-  is known).
-- **degradation** = distorted − clean (how much the corruption destroyed).
-- **recovery (enhance / finetune / combined)** = improved − distorted (how
-  much each improvement strategy won back; negative = made it worse).
-
-Example — `salt_pepper/high`: clean mAP 0.352 collapses to 0.079 (−0.274);
-the median filter restores it to 0.321 (+0.242, 89% of the damage), the
-fine-tuned model to 0.202 (+0.124), both together to 0.288. Bold marks
-recoveries ≥ +0.04.
+**Column guide:**
+- **SNR (dB)** — measured signal-to-noise ratio of distorted vs clean images (lower = more corrupted)
+- **clean** — task metric on original images (constant per task; detection = mAP@[.5:.95], features = ORB match ratio, keypoints = OKS AP, segmentation = PQ)
+- **distorted** — metric on corrupted images
+- **enhanced** — metric after matched classical restoration (non-blind BM3D for Gaussian, median filter for salt & pepper, non-blind Wiener for motion blur)
+- **finetuned** — fine-tuned YOLOv8n (detection only; trained on a per-image mixture of 25% clean + all 9 distortion cells, half of the corrupted picks classically restored); evaluated on all cells
+- **finetuned+enh** — fine-tuned detector running on enhanced images: both repairs stacked
+- **degradation** = distorted − clean
+- **recovery** = improved − distorted (positive = improvement; negative = made it worse). Bold marks recoveries ≥ +0.04.
 
 | task | distortion | severity | SNR (dB) | clean | distorted | enhanced | finetuned | finetuned+enh | degradation | recovery (enhance) | recovery (finetune) | recovery (combined) |
 |:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -344,170 +234,169 @@ recoveries ≥ +0.04.
 | segmentation | salt_pepper | med | 11.8 | 0.410 | 0.150 | **0.373** | — | — | −0.260 | **+0.223** | — | — |
 | segmentation | salt_pepper | high | 8.2 | 0.410 | 0.105 | **0.348** | — | — | −0.304 | **+0.243** | — | — |
 
+---
 
-### Visual examples
+### Plot 1 — Recovery per Distortion × Severity Cell
 
-**Predictions drawn on the images** (the course's "image with annotation"):
-gray dashed boxes = COCO ground truth, solid boxes = YOLO detections with
-scores, columns = clean / distorted (high severity) / enhanced / distorted
-with the fine-tuned model. You can watch detections disappear under the
-corruption and reappear after each repair:
+![recovery per cell](results/figures/recovery_bars.png)
+
+Each panel corresponds to one task (detection, features, keypoints, segmentation). Within each panel, bar groups correspond to the nine distortion × severity cells (three distortions × three severities). Blue bars show the raw distorted metric; green bars show the metric after classical enhancement; amber bars show the metric after fine-tuning (detection only). The dashed horizontal line marks the clean baseline for that task. Each bar is labeled with the fraction of the total damage that the repair recovered (e.g., +67% means two-thirds of the degradation was undone).
+
+---
+
+### Plot 2 — Per-Class AP Under Gaussian Noise, High Severity
+
+![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
+
+AP per COCO object class for the `gauss_noise / high` distortion cell (SNR ~10 dB). Gray bars show the clean detection baseline, blue bars the distorted AP, green bars the AP after BM3D enhancement, and amber bars the AP of the fine-tuned YOLOv8n detector. Classes are sorted by their clean AP (descending). The n= label below each class name shows the number of GT instances in the 1,521-image subset.
+
+---
+
+### Plot 3 — Task Metric vs SNR, per Distortion
+
+![detection vs SNR](results/figures/acc_vs_snr_detection.png)
+![features vs SNR](results/figures/acc_vs_snr_features.png)
+![keypoints vs SNR](results/figures/acc_vs_snr_keypoints.png)
+![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
+
+One figure per task; within each figure, one panel per distortion type (Gaussian noise, salt-and-pepper, motion blur), with a shared y-axis. The x-axis is the measured per-image SNR (dB) of each severity level; lower SNR corresponds to higher severity. Series: distorted (blue, solid ●), enhanced (green, dashed ■), fine-tuned (amber, dotted ▲; detection only), and the clean baseline (gray dashed line). Each severity step is a single point on the x-axis because all images within a severity share the same distribution of sampled degradation parameters.
+
+---
+
+### Plot 4 — Per-Class AP of Clean Detection Baseline
+
+![per-class AP clean](results/figures/per_class_ap_clean.png)
+
+AP per COCO object class for the clean (undistorted) YOLOv8n evaluation on the 1,521-image subset. Classes are sorted by AP (descending). The n= annotation below each class name shows the GT instance count. The dashed horizontal line marks the mean AP across all classes. This establishes the per-class starting point from which all degradation and recovery deltas are measured.
+
+---
+
+### Plots 5–8 — Annotated Prediction Examples by Task
+
+The following figures overlay predictions, ground truth, segmentation masks, or feature matches on images from the benchmark subset for all three distortion types at high severity. They provide a direct visual comparison of clean, corrupted, and restored outputs, including fine-tuned detection where applicable.
+
+**Plot 5 — Object detection (YOLOv8n):** Gray dashed boxes = COCO ground-truth bounding boxes; solid colored boxes = YOLO predictions with class label and confidence score. Columns: clean / distorted (high severity) / enhanced / distorted with the fine-tuned model.
 
 ![annotated gauss noise](results/figures/annotated_gauss_noise.png)
 ![annotated salt & pepper](results/figures/annotated_salt_pepper.png)
 ![annotated motion blur](results/figures/annotated_motion_blur.png)
 
-**Keypoint R-CNN predictions drawn on the images** — clean / distorted /
-enhanced for the same scenes. Gray dashed lines = GT skeleton (from the
-COCO keypoints annotation), white skeleton + yellow joint dots = predictions
-at score ≥ 0.35. Under heavy Gaussian noise or motion blur you can see the
-skeleton geometry degrade and joints drift off the body — the restoration
-pulls them back:
+**Plot 6 — Keypoint detection (Keypoint R-CNN):** Gray dashed lines and dots = ground-truth skeleton from the COCO keypoints annotation; white skeleton + yellow joint dots = model predictions at confidence ≥ 0.35. Columns: clean / distorted (high severity) / enhanced.
 
 ![keypoints gauss noise](results/figures/keypoints_gauss_noise.png)
 ![keypoints salt & pepper](results/figures/keypoints_salt_pepper.png)
 ![keypoints motion blur](results/figures/keypoints_motion_blur.png)
 
-**Panoptic segmentation drawn on the images** — ground truth / clean /
-distorted (high severity) / enhanced, same scenes as above. Color = category
-(consistent across panels), white hairlines = segment boundaries, and each
-column header carries the cell's PQ. You can see the RQ mechanism from the
-key findings directly: under corruption whole segments disappear or flip
-category (the teddy bears turn into mislabeled fragments), and the matched
-restoration brings them back:
+**Plot 7 — Panoptic segmentation (Panoptic FPN):** Color = semantic category (consistent palette across all panels); white hairlines = segment boundaries; each column header shows the cell's PQ value. Columns: ground truth / clean / distorted (high severity) / enhanced.
 
 ![panoptic gauss noise](results/figures/panoptic_gauss_noise.png)
 ![panoptic salt & pepper](results/figures/panoptic_salt_pepper.png)
 ![panoptic motion blur](results/figures/panoptic_motion_blur.png)
 
-**ORB feature matching visualized** — the low-level metric, drawn. Each pair
-is the clean image (left) matched against the distorted / enhanced variant
-(right); lines are *good* matches (same matcher and Hamming ≤ 64 threshold
-as the metric) and the caption under each pair is the actual per-image score:
-good matches / clean keypoints. Two things are visible at a glance: how many
-matches each repair wins back, and their *geometry* — under heavy blur the
-few surviving matches include crossing (false) correspondences, while the
-Wiener-restored pair shows dense parallel lines, i.e. spatially consistent
-true matches:
+**Plot 8 — ORB feature matching:** Each image pair shows the clean image (left) matched against the distorted or enhanced variant (right). Lines connect good matches (Hamming distance ≤ 64, cross-checked — the same criterion as the metric). The caption below each pair is the actual per-image match ratio (good matches / clean keypoints). Two or three example pairs are shown per distortion row.
 
 ![orb matches gauss noise](results/figures/orb_matches_gauss_noise.png)
 ![orb matches salt & pepper](results/figures/orb_matches_salt_pepper.png)
 ![orb matches motion blur](results/figures/orb_matches_motion_blur.png)
 
-Raw input/output examples — clean / distorted (high severity) / enhanced.
-These show *why* the numbers behave as they do: BM3D removes the heavy grain
-while keeping edges and texture, the median filter visibly removes impulse
-pixels, and the known-kernel Wiener filter visibly re-sharpens what motion
-blur smeared:
+---
+
+### Plots 9–11 — Raw Noise and Enhancement Examples
+
+Clean / distorted (high severity) / enhanced image grids for each distortion type, showing images **different from those used in Plots 5–8**. These show directly why the metrics behave as they do at the pixel level — without model predictions, so the pixel-level effect of each corruption and its restoration is visible in isolation.
 
 ![gauss noise grid](results/figures/grid_gauss_noise.png)
 ![salt & pepper grid](results/figures/grid_salt_pepper.png)
 ![motion blur grid](results/figures/grid_motion_blur.png)
 
-### Validity: is the 1,521-image subset representative and class-balanced?
+---
 
-The subset is a **seeded random sample of 1,500 images topped up with 21
-images for class coverage** (deterministic, same shuffled order), giving
-11,129 GT instances. Checks:
+## Conclusions and Discussion
 
-- Class distribution matches full val2017 almost exactly: class-proportion
-  correlation **r = 0.999**.
-- Clean detection mAP (0.352) is within 0.02 of YOLOv8n's published
-  full-val2017 mAP (~0.373); keypoints rest on **3,273 person instances**.
-- **Every one of the 80 classes has ≥ 20 GT instances** (median 81), except
-  `toaster` (9) and `hair drier` (11) — for which the subset already contains
-  **100% of their instances in all of val2017**, so no sample can do better.
-- All comparisons are **paired** (identical images and GT across every
-  variant), so degradation/recovery deltas are not affected by sampling.
+### Classical enhancement is the best standalone repair in all 9 detection cells
 
-With the coverage floor, per-class AP now rests on ≥ 20 objects per class
-(the per-class figure still shows the exact n= under each class name).
+For detection, classical enhancement outperforms fine-tuning alone in every distortion × severity cell. When the stacked strategy (enhancement + fine-tuning) is also considered, enhancement produces the highest score in 7 of 9 cells, while the stack wins on medium and high motion blur. Enhancement also improves over the raw distorted baseline in all 36 cells across all four tasks. Three structural reasons help explain this:
 
-### Fine-tuning setup (Phase 4)
+1. **Restoration uses known corruption information; the fine-tuned model does not.** BM3D derives its noise level from the recorded Gaussian variance, and Wiener deconvolution reconstructs a matched kernel from the recorded size and angle; the median filter is fixed and uses no per-image parameter. The fine-tuned detector receives no corruption label or parameter at inference time, so one set of weights must handle every input domain. Thus, in this controlled experiment, matched restoration has an information advantage over fine-tuning alone. This advantage may not hold for mixed, spatially varying, or unknown real-world corruptions, which were not evaluated here.
 
-- Data: 9,000-image train2017 subset, corrupted on the fly with a **per-image
-  seeded mixture**: clean with p=0.25, else one of the 9
-  (distortion × severity) cells uniformly, and **half of the corrupted picks
-  are passed through their matched classical restorer** (BM3D / median /
-  Wiener with the *sampled* per-image degradation params — the same non-blind
-  scheme as the val enhancement). Result: 2,310 clean + ~340–430 images per
-  cell split between raw and restored variants; **real COCO boxes** converted
-  to YOLO labels (no pseudo-labels). 8,100 images train / 900 held out as the
-  YOLO val split so best-checkpoint selection is honest.
-- Training: `yolov8n.pt` continued with AdamW (lr0 = 1e-4 pinned, cosine
-  schedule), imgsz 640, batch 16; ran the full 30 epochs (patience 10) —
-  ~28 minutes on one NVIDIA L4. Checkpoint:
-  [`models/yolov8_finetuned.pt`](models/yolov8_finetuned.pt) (committed; the
-  clean baseline model is untouched).
-- Evaluation: the fine-tuned detector runs on the **clean** val subset
-  (forgetting check: 0.310 vs 0.352 pretrained; the v2 10%-clean mixture had
-  cost 0.068), on **all 9 distorted** cells, and on **all 9 enhanced** cells
-  (the `finetuned+enh` column) of the 1,521-image subset — all held out; the
-  model never sees a val2017 image during training, so there is no leakage.
-- Why the mixture is shaped this way: v2 trained on a uniform mix of clean +
-  9 raw cells (10% clean, no restored images) and paid for it twice — it
-  *lost to the pretrained model* on every low-severity cell (clean
-  forgetting) and scored *below* the pretrained model on the median-filtered
-  salt & pepper images it would see in a restore-then-detect deployment
-  (domain mismatch). The v3 mixture attacks both: more clean anchors the
-  clean statistics (and makes best.pt selection reward keeping them), and
-  the restored picks put the deployment inputs in-domain. Both v2 failures
-  and the fix are quantified in [docs/archive/](docs/archive/).
+2. **A plausible explanation is distribution alignment.** The pretrained models were trained on COCO images without the synthetic corruptions used in this benchmark. Matched restoration makes corrupted inputs more similar to those training images. Fine-tuning instead adapts YOLOv8n to a 9,000-image mixed-domain subset; it improves on the pretrained detector in 7 of 9 corrupted cells but reduces clean mAP from 0.3521 to 0.3104 (−0.0417).
 
-### Do the results serve the project goals?
+3. **Enhancement is reusable across models; fine-tuning is model-specific.** The same restored image sets are consumed unchanged by all four task pipelines and improve on their raw distorted scores in every cell. The fine-tuned checkpoint, by contrast, applies only to YOLOv8n detection; adapting the other learned models would require separate training.
 
-The course defines four measurable outcomes; each is met with a quantified
-answer rather than a demo:
+### Recovery completeness is determined by how much information the corruption destroys
 
-1. **Baseline performance (vs GT)** — met and *validated*: all four baselines
-   land at their expected values (mAP 0.352 vs ~0.373 published, OKS AP 0.657,
-   PQ 0.410, ORB 1.000 by construction). This matters because every later
-   number is a delta against this baseline — if the baseline were off, the
-   whole study would measure pipeline bugs instead of robustness.
-2. **Performance on distorted images — per distortion, per class, per SNR** —
-   met: 36 (task × distortion × severity) cells, all degrading monotonically
-   with SNR, with the exact per-image degradation parameters logged. Beyond
-   the requirement, the data shows **SNR alone does not predict task damage**:
-   motion blur has a *higher* SNR than the noise corruptions yet destroys
-   localization tasks the most (ORB −0.80, keypoints −0.50) — spatial
-   structure matters more than pixel-wise error energy.
-3. **Performance on enhanced images** — met, with a sharp engineering
-   conclusion: classical restoration is as good as its *degradation model* —
-   and non-blind beats blind everywhere it was tried. Median ↔ impulse noise
-   recovers +0.03…+0.34 across all four tasks; logged-kernel Wiener ↔ motion
-   blur +0.03…+0.28 (a blind kernel guess measured worse than nothing);
-   logged-sigma BM3D ↔ Gaussian noise +0.01…+0.17 across all four tasks. The
-   project also *diagnosed and fixed* its own negative result: v2's NLM
-   denoiser hurt every pixel-precise task; size-stratified AP, the PQ→SQ/RQ
-   decomposition and a texture-energy analysis located the mechanism (texture
-   loss + residual noise), and swapping in a texture-preserving non-blind
-   denoiser flipped all 12 gauss cells positive — the archived negative
-   result now delimits *which filter*, not *whether*, to deploy.
-4. **Fine-tuned model on distorted images** — met: the clean-heavy,
-   restoration-aware mixture improves every med/high cell (up to +0.124)
-   with no catastrophic negative transfer (v1's single-cell training,
-   archived, lost on 5 of 9 cells) and near-zero regression on low-severity
-   cells (worst −0.012; v2: −0.035). The robustness price is *measured and
-   managed*: −0.042 mAP on clean images, down from v2's −0.068 by raising
-   the clean share of the training mix.
+Enhancement recovers very different fractions of the damage depending on corruption type, and this reflects the fundamental invertibility of each forward model:
 
-Bottom line: the four phases compose into a **decision matrix** — corruption
-known and parameterizable (impulse density, blur kernel, noise sigma):
-restore classically with the matched non-blind filter, it is the cheapest and
-best single repair on 7 of 9 cells; heavy or partially-repairable corruption
-(motion blur at med/high): stack restoration with the fine-tuned model, the
-stack is additive now that training saw restored images and it wins those
-cells; corruption unknown or unparameterizable: deploy the fine-tuned model
-alone — it is never more than 0.012 below the pretrained baseline on any
-cell and recovers up to +0.124 in-domain; and if the deployment also sees
-clean images, budget the measured (and now reduced) −0.042 clean-accuracy
-cost — exactly the trade-off the assignment asks the project to expose.
+- **Salt-and-pepper** is the most recoverable: the median filter restores 80–91% of the detection loss and 74–88% of the segmentation loss at high severity. Each corrupted pixel is an isolated outlier surrounded by uncorrupted neighbors, so the median can discard it exactly and replace it with a true local value. Almost no information is permanently lost.
+- **Gaussian noise** reaches 67–74% recovery on detection with non-blind BM3D. Additive white noise spreads energy uniformly across all frequencies; a strong denoiser can suppress most of it, but the lowest-amplitude signal components (fine texture, small edges) are irreversibly masked even at the best denoising strength. Hence recovery is strong but not complete.
+- **Motion blur** achieves only 25–45% recovery even with the optimal Wiener filter given the exact kernel. Blur zeroes entire frequency bands — any spatial frequency oriented along the blur direction is completely destroyed. No linear filter can recover energy that was set to zero; what Wiener does is suppress amplified noise in the bands that remain. This is a hard information-theoretic ceiling, and it explains why the stack (enhancement + fine-tuning) is the only competitive strategy for heavy motion blur.
+
+The ordering — salt-and-pepper ≫ Gaussian ≫ motion blur — reflects how permanently each corruption destroys image information, not how severe it looks by eye or by SNR.
+
+### Tasks have different sensitivity profiles across corruption types
+
+The same corruption at the same SNR damages different tasks to very different degrees, revealing what each metric actually measures:
+
+- **Motion blur** is by far the most damaging corruption for localization-sensitive tasks: ORB match ratio falls −0.80 and OKS AP falls −0.50 at high severity, both worse than any noise corruption despite motion blur having a *higher* SNR. Blur removes the sharp edges and fine texture that ORB descriptors and keypoint localization depend on. Detection mAP and PQ also suffer badly (−0.29, −0.29), but their losses are closer to those from the noise corruptions.
+- **Salt-and-pepper** hits all tasks roughly equally in absolute degradation terms, but the median filter rescues them equally well too — making it the corruption with the smallest *net* impact after enhancement.
+- **Gaussian noise** is most damaging to ORB (−0.38 at high) relative to what enhancement recovers (+0.04), because even after BM3D removes the noise the enhanced image still differs from the clean one in fine texture — and ORB penalises that difference by construction. The GT-scored tasks (detection, keypoints, segmentation) recover much better (+0.17, +0.11, +0.09 at high severity) because a smoothed image can still contain the semantic structure needed to localise objects and joints.
+
+The practical implication: if you want to predict which corruption will most harm your pipeline, ask what information your metric depends on. Spatial frequency content (edges, texture) → motion blur is the worst. Pixel-level fidelity to the original → noise corruptions dominate.
+
+### Fine-tuning becomes more useful as corruption severity increases
+
+The fine-tuned detector's absolute mAP still decreases as corruption becomes stronger, but its improvement over the pretrained detector on the same corrupted inputs grows with severity. Averaged across the three corruption types, fine-tuning recovery rises from −0.005 mAP at low severity to +0.060 at medium and +0.088 at high severity. The increase is monotonic for Gaussian and salt-and-pepper noise; for motion blur, recovery plateaus at approximately +0.054 for both medium and high severity.
+
+This pattern is plausible because mild corruption leaves the inputs relatively close to the pretrained model's training domain, so the original detector remains strong and fine-tuning has little room to help; its reduced clean accuracy can even make low-severity performance slightly worse. As corruption intensifies, the domain gap and the pretrained model's degradation grow, so exposure to corrupted and restored training examples provides a larger relative benefit. The motion-blur plateau suggests a limit to adaptation alone: once enough spatial detail has been removed, fine-tuning cannot reconstruct the missing image information.
+
+Fine-tuning alone still trails classical enhancement in all 9 detection cells. Its clearest complementary value appears when the two methods are stacked: the combined strategy produces the highest mAP for medium and high motion blur. At high motion blur, it recovers 44.5% of the clean-to-distorted loss, compared with 24.9% for enhancement alone and 18.3% for fine-tuning alone. Mixed, spatially varying, and previously unseen corruptions were not evaluated, so the results do not establish how either method would rank in those settings.
+
+### SNR tracks severity within a corruption type, but not damage across types
+
+Within each corruption type, task performance decreases monotonically as mean SNR falls and severity increases, supporting the internal consistency of the severity settings. However, SNR alone is not comparable across corruption types as a complete predictor of task damage. High motion blur (15.6 dB) causes the largest losses for ORB (−0.80) and keypoints (−0.50), despite having higher SNR than high Gaussian noise (10.0 dB) and high salt-and-pepper noise (8.2 dB). In this experiment, preservation of spatial structure is therefore more informative than pixel-wise SNR for geometry-sensitive tasks.
+
+### The results confirm and deepen expected algorithm behavior
+
+The benchmark confirms published intuitions — median filter rescues impulse noise, BM3D is the strongest Gaussian denoiser, known-kernel Wiener is optimal for blur — while quantifying *how much* of each task's damage each repair recovers, and exposing the conditions under which the ranking flips. The result is a practical decision matrix: corruption known and parameterizable → restore classically; heavy or partially-repairable → stack; unknown → fine-tune alone. This is not an academic distinction: it maps directly to deployment choices in autonomous driving, medical imaging, and surveillance systems where the noise source may or may not be known at inference time.
+
+### Conclusion
+
+Image distortion inflicts substantial but largely recoverable damage on modern vision systems when the restoration method matches the degradation model. Classical enhancement is the strongest standalone repair in all 9 detection cells and improves the distorted baseline in all 36 cells across the four tasks. When enhancement and fine-tuning are stacked, the combination produces the best result on medium and high motion blur. The project also demonstrates the diagnostic power of metric decomposition (PQ → SQ/RQ, AP → small/large): by examining *where* recovery fails we located and fixed a denoiser that actively hurt the system. Together, the four phases form a repeatable robustness-evaluation framework for controlled image corruptions.
+
+---
+
+## Appendix: Previous Versions and Known Failures
+
+### v1 — Single-Cell Fine-tuning
+
+**What was tried:** YOLOv8n fine-tuned on a single corruption cell (gauss_noise/high only).
+
+**What failed:** Textbook **negative transfer**. The model more than doubled in-domain mAP (gauss_noise/high) but lost to the pretrained model on every motion-blur cell and every low-severity cell — recovery of −0.02…−0.10 on 5 of 9 cells. Training on one cell shifts weights toward one corruption distribution, making the model actively worse on all others.
+
+**Lesson:** Single-cell fine-tuning is not a valid robustness strategy. A mixture covering all target corruptions is necessary.
+
+Full v1 numbers: [docs/archive/](docs/archive/)
+
+### v2 — NLM Denoiser + 10%-Clean Mixture
+
+**What was tried:** (1) Sigma-adaptive NLM as the Gaussian noise enhancement; (2) a 10% clean / 90% distorted training mixture with no restored images in fine-tuning.
+
+**What failed — NLM denoiser:** NLM scored *below the raw noisy images* on every pixel-precise task (keypoints, panoptic, ORB match ratio). Three concurrent mechanisms were identified:
+- NLM output retained more high-frequency energy than the clean image (blotchy residual noise rather than clean signal)
+- Damage concentrated on small objects (small-AP fell while large-AP rose under NLM)
+- Texture-defined "stuff" classes lost entire segments (panoptic RQ collapsed while SQ barely moved — whole regions went missing, not sloppy boundaries)
+
+BM3D's collaborative patch filtering removes ~4–5 dB more noise while keeping texture, flipping all 12 Gaussian-noise cells positive. Full diagnosis: [docs/archive/v2_nlm_gauss_enhance.md](docs/archive/v2_nlm_gauss_enhance.md)
+
+**What failed — 10%-clean mixture:** Clean accuracy dropped by −0.068 mAP (vs. −0.042 for v3). More critically, the model never trained on restored images — so on the enhanced val images a real deployment would feed it, the fine-tuned model scored *below the pretrained model* at every severity (domain mismatch). The stack was non-additive. Full v2 fine-tuning numbers: [docs/archive/v2_finetune_mixture.md](docs/archive/v2_finetune_mixture.md)
+
+**Lesson:** The filter matters as much as the concept; NLM and BM3D behave very differently on texture-rich images. And the training distribution must include the deployment distribution — if the pipeline applies restoration before inference, training without restored images creates a domain gap that erases the enhancement benefit.
 
 ---
 
 ## Environments
-Two virtualenvs are required because detectron2 needs an older torch than the
-main stack:
+
+Two virtualenvs are required because detectron2 needs an older torch than the main stack:
 
 ```bash
 # (1) main env — detection (YOLOv8), keypoints (torchvision), distortions, eval, plots
@@ -527,205 +416,140 @@ pip install --no-build-isolation 'git+https://github.com/facebookresearch/detect
 pip install 'git+https://github.com/cocodataset/panopticapi.git'
 deactivate
 ```
+
 Sanity checks (run on a **GPU node** for the `cuda` checks):
 ```bash
-.venv/bin/python      -c "import torch,torchvision,cv2,ultralytics,pycocotools; print(torch.cuda.is_available())"
-.venv-det/bin/python  -c "import torch,detectron2; from panopticapi.evaluation import pq_compute; print(torch.cuda.is_available())"
+.venv/bin/python     -c "import torch,torchvision,cv2,ultralytics,pycocotools; print(torch.cuda.is_available())"
+.venv-det/bin/python -c "import torch,detectron2; from panopticapi.evaluation import pq_compute; print(torch.cuda.is_available())"
 ```
-> The detectron2 env builds from source; for GPU support build it on a node that
-> has the CUDA toolkit (`nvcc`).
+
+> The detectron2 env builds from source; for GPU support, build it on a node that has the CUDA toolkit (`nvcc`).
 
 ---
 
-## How to run each phase
+## How to Run Each Phase
 
-The orchestrator `scripts/run_pipeline.py` is **resumable** (skips work whose
-output already exists; add `--force` to recompute). Phases map to stages:
-`data, distort, enhance, infer, eval, finetune, report`.
+The orchestrator `scripts/run_pipeline.py` is **resumable** (skips work whose output already exists; add `--force` to recompute). Phases map to stages: `data, distort, enhance, infer, eval, finetune, report`.
 
 ### Everything at once
 ```bash
-python scripts/run_pipeline.py                      # phases 0–5
-sbatch slurm/pipeline.sbatch                         # same, on a GPU node
+python scripts/run_pipeline.py          # phases 0–5
+sbatch slurm/pipeline.sbatch            # same, on a GPU node
 ```
 
 ### Phase 0 — Setup & Data
 ```bash
-python -m src.data                                   # annotations + subset images (+ panoptic GT)
-# (env setup as above)
+python -m src.data                      # annotations + subset images (+ panoptic GT)
 ```
 
-### Phase 1 — Clean baseline
+### Phase 1 — Clean Baseline
 ```bash
-python scripts/run_pipeline.py --only infer eval     # runs clean first (+ all variants)
-# or just the clean models manually:
+python scripts/run_pipeline.py --only infer eval
+# or manually:
 python -m src.inference --task detection --variant clean
 python -m src.inference --task keypoints --variant clean
-python -m src.metrics   --task segmentation --variant clean   # detectron2 subprocess
+python -m src.metrics   --task segmentation --variant clean
 python -m src.metrics   --task detection    --variant clean
 python -m src.metrics   --task keypoints    --variant clean
-python -m src.metrics   --task features     --variant clean   # ORB (CPU, no preds needed)
+python -m src.metrics   --task features     --variant clean
 ```
 
 ### Phase 2 — Distortion
 ```bash
-python -m src.distortions                            # writes data/distorted/** + snr_index.csv
+python -m src.distortions               # writes data/distorted/** + snr_index.csv
 python -m src.inference --task detection --variant distorted --dtype motion_blur --severity high
 python -m src.metrics   --task detection --variant distorted --dtype motion_blur --severity high
 ```
 
 ### Phase 3 — Enhancement
 ```bash
-python -m src.enhancement                            # writes data/enhanced/**
+python -m src.enhancement               # writes data/enhanced/**
 python -m src.inference --task detection --variant enhanced --dtype gauss_noise --severity high
 python -m src.metrics   --task detection --variant enhanced --dtype gauss_noise --severity high
 ```
 
 ### Phase 4 — Fine-tuning (YOLOv8)
 ```bash
-python -m src.finetune_det --mode both               # train on distorted train2017 + evaluate
-sbatch slurm/finetune.sbatch                          # on a GPU node
+python -m src.finetune_det --mode both  # train + evaluate
+sbatch slurm/finetune.sbatch            # on a GPU node
 ```
 
 ### Phase 5 — Report
 ```bash
-python -m src.tables                                 # comparison.csv / comparison.md / summary_long.csv
-python -m src.visualize                              # acc-vs-SNR curves, per-class AP bars, image grids
-python scripts/run_pipeline.py --only report
+python -m src.tables                    # comparison.csv / comparison.md / summary_long.csv
+python -m src.visualize                 # all figures
 ```
 
 ---
 
-## Repository structure
+## Repository Structure
+
 ```
-configs/config.yaml        # single source of truth: paths, seed, subset sizes,
-                           #   distortions×severities, tasks, orb/yolo/finetune/segmentation params
-requirements.txt           # main venv deps
-src/
-  config.py                # config loader + variant/path helpers
-  data.py                  # download annotations (+panoptic) + subset images; seeded splits
-  distortions.py           # gaussian / salt-pepper / motion-blur + compute_snr
-  enhancement.py           # non-blind BM3D / median / non-blind Wiener restorers (NLM kept switchable)
-  models.py                # YOLOv8 loader (+COCO80<->91 map), Keypoint R-CNN loader
-  inference.py             # detection (YOLO) + keypoints -> COCO prediction JSON
-  segmentation.py          # Panoptic FPN inference + PQ  (runs under .venv-det)
-  metrics.py               # COCOeval (bbox/keypoints); shells out for segmentation PQ
-  tables.py                # comparison / degradation / recovery tables
-  visualize.py             # acc-vs-SNR curves, per-class AP bars, image grids,
-                           #   annotated detection / panoptic-overlay / ORB-match grids
-  finetune_det.py          # fine-tune YOLOv8 on distorted train2017 (real GT)
-scripts/run_pipeline.py    # resumable orchestrator over all phases
-slurm/                     # pipeline / inference / finetune sbatch jobs
-results/{preds,metrics,figures}/   # generated outputs
-data/                      # coco/ images+annotations, distorted/, enhanced/ (gitignored)
-docs/                      # archived v1 result tables + the course reference pipeline
-slides/                    # final presentation (PPTX + PDF)
+.
+├── configs/
+│   └── config.yaml          # Central experiment configuration
+├── src/
+│   ├── config.py            # Configuration and path helpers
+│   ├── data.py              # COCO download and seeded subset creation
+│   ├── distortions.py       # Corruption generation and SNR measurement
+│   ├── enhancement.py       # BM3D, median, and Wiener restoration
+│   ├── models.py            # YOLOv8 and Keypoint R-CNN loaders
+│   ├── inference.py         # Detection and keypoint inference
+│   ├── segmentation.py      # Panoptic FPN inference and PQ evaluation
+│   ├── metrics.py           # ORB, detection, keypoint, and panoptic evaluation
+│   ├── finetune_det.py      # YOLOv8 fine-tuning and evaluation
+│   ├── tables.py            # Result aggregation and comparison tables
+│   └── visualize.py         # Plots and annotated examples
+├── scripts/
+│   ├── run_pipeline.py      # Resumable pipeline orchestrator
+│   ├── build_slides.py      # Presentation generator
+│   └── readme_table.py      # README result-table generator
+├── slurm/
+│   └── *.sbatch             # Cluster jobs for preparation, inference, and training
+├── data/
+│   ├── splits/              # Committed train/validation image-ID manifests
+│   ├── coco/                # Downloaded COCO data (gitignored)
+│   ├── distorted/           # Generated corrupted images (gitignored)
+│   └── enhanced/            # Generated restored images (gitignored)
+├── results/
+│   ├── preds/               # Model predictions
+│   ├── metrics/             # Per-cell metrics and comparison tables
+│   └── figures/             # Generated plots and visual examples
+├── docs/
+│   ├── reference_pipeline_from_slides.md
+│   └── archive/             # Previous experiments and failure analyses
+├── slides/
+│   └── slide_script.md
+├── models/                  # Generated fine-tuned checkpoints (gitignored)
+├── requirements.txt
+└── README.md
 ```
 
 ## Configuration
+
 All knobs live in [configs/config.yaml](configs/config.yaml):
 - `dataset.val_subset_size` / `train_subset_size`, `seed`
-- `distortions:` — the three corruptions × 3 severities
-- `enhancement:` — `gauss_method: bm3d|nlm` (v3 non-blind BM3D vs the archived
-  v2 NLM) and the CPU worker fan-out for the restoration stage
+- `distortions:` — the three corruptions × 3 severities with per-severity parameters
+- `enhancement:` — `gauss_method: bm3d|nlm` and the CPU worker fan-out
 - `tasks:` — `[detection, keypoints, segmentation]`
 - `yolo.weights` — `yolov8n.pt` (bump to `yolov8s/m.pt` for accuracy)
-- `finetune:` — epochs / batch / imgsz / lr0 / val_fraction /
-  `clean_fraction` / `restored_fraction` (the v3 training-mixture knobs;
-  `distortion`/`severity` only pick the showcase cell for the per-class
-  figure)
+- `finetune:` — epochs / batch / imgsz / lr0 / val_fraction / `clean_fraction` / `restored_fraction`
 - `segmentation:` — detectron2 venv python path + Panoptic FPN config
 
 ## Outputs
+
 - `results/preds/{task}__{variant}.json` — predictions (segmentation also writes PNG masks)
-- `results/metrics/{task}__{variant}.json` — per-(task,variant) metrics
+- `results/metrics/{task}__{variant}.json` — per-(task, variant) metrics
 - `results/metrics/snr_index.csv` — per-image SNR for every distortion/severity
 - `results/metrics/summary_long.csv`, `comparison.csv`, `comparison.md` — aggregated tables
-- `results/figures/*.png` — acc-vs-SNR curves, per-class AP bars, image grids
-
-## Metrics
-- **Features** (ORB): **match ratio** — good BFMatcher(Hamming, cross-check)
-  matches (distance ≤ 64) between clean and variant descriptors / clean
-  keypoints; clean vs clean = 1.0 by construction.
-- **Detection** (YOLOv8): COCOeval **bbox mAP**, mAP@.50, mAP@.75, per-class AP, small/med/large.
-- **Keypoints** (Keypoint R-CNN): COCOeval **keypoints** (OKS) AP.
-- **Segmentation** (Panoptic FPN): **PQ / SQ / RQ** via panopticapi (things & stuff),
-  plus the PQ_things / PQ_stuff split per cell.
-- Tables report **degradation** (distorted − clean) and **recovery** (enhanced/fine-tuned − distorted).
-
-> **Metric caveat (ORB match ratio).** The features score measures similarity
-> to the *clean image's* ORB features, not task utility: any enhancement that
-> alters texture — smoothing in particular — is penalized *by construction*,
-> even when the same enhanced images improve every GT-scored task. (Salt &
-> pepper shows this cleanly: the median-filtered images improve detection,
-> keypoints and segmentation, while their ORB score stays well below the
-> clean-reference 1.0. BM3D is the counterpoint: its texture preservation is
-> good enough that the gauss-denoised images score *above* the noisy ones
-> even under this clean-reference metric.) Its clean baseline of exactly 1.0
-> is also "free", so degradation magnitudes are not directly comparable with
-> the GT-based tasks.
-> Cross-task conclusions in this report therefore lean on the three GT-based
-> metrics; ORB answers the narrower low-level question "does the raw signal
-> still carry the same local structure?"
-
-## How fine-tuning works
-`src/finetune_det.py` corrupts the train2017 subset on the fly with a
-**per-image seeded mixture** — clean with p=0.25, else one of the 9
-(distortion × severity) cells, and half of the corrupted picks passed through
-their **matched classical restorer** with the sampled degradation params —
-writes the **real** COCO boxes as YOLO labels, and continues training the
-**pretrained** `yolov8n.pt` on that data (AdamW, lr0 pinned to 1e-4, cosine
-schedule — `optimizer=auto` silently overrides lr0, so it is set explicitly).
-A seeded 10% split of the *train* subset is held out as the YOLO val set so
-best-checkpoint selection is honest (selecting on the training images selects
-for memorization). The result is saved separately as
-`models/yolov8_finetuned.pt` (the clean baseline model is untouched) and
-evaluated on the **clean** val subset (does robustness cost clean accuracy?),
-all **nine distorted** val cells, and all **nine enhanced** val cells (is
-classical restoration on top of fine-tuning additive?) — all held out, the
-model never sees a val2017 image during training.
-
-Why the mixture is shaped this way — each ingredient fixes a measured failure:
-
-- *Mixture at all* (v2 fix): v1 fine-tuned on a single cell
-  (gauss_noise/high) and showed textbook graded negative transfer — it more
-  than doubled in-domain mAP but *lost* to the pretrained model on every
-  motion-blur cell and every low-severity cell (recovery −0.02…−0.10).
-- *25% clean, up from 10%* (v3 fix): v2's near-uniform mix drifted off clean
-  statistics — −0.068 mAP on clean images, which made it lose to *doing
-  nothing* on every low-severity cell. v3: −0.042 on clean, worst
-  low-severity regression −0.012, med/high cells unchanged.
-- *Restored images in the mix* (v3 fix): v2 never trained on restored images,
-  so on the median-filtered salt & pepper images a deployment would actually
-  feed it, it scored *below the pretrained model* at every severity
-  (0.263–0.269 vs 0.321–0.339). With restored picks in training the stack
-  improved on all 9 cells and now wins the heavy motion-blur cells.
-
-All three earlier iterations are archived with their numbers in
-[docs/archive/](docs/archive/).
+- `results/figures/*.png` — all figures (acc-vs-SNR curves, per-class AP bars, image grids)
 
 ---
 
-## Committing and pushing
-Generated data/outputs and environments are gitignored (`data/`,
-`results/preds`, `results/figures`, `.venv/`, `.venv-det/`, `*.zip`, `*.pt`).
-
-```bash
-git add -A
-git commit -m "your message"
-git push -u origin <branch>      # e.g. ohads/phase0
-```
-If `git push` reports `could not read Username for 'https://github.com'`, the
-machine has no stored credentials. Authenticate with one of:
-```bash
-gh auth login                                                # (a) GitHub CLI
-git push https://<TOKEN>@github.com/ShiraTzi/Final-Project-Image-Processing.git <branch>   # (b) PAT
-git remote set-url origin git@github.com:ShiraTzi/Final-Project-Image-Processing.git       # (c) SSH
-```
-
 ## Deliverables
-- This README as the detailed report (choices, methods, metrics, run instructions).
-- Result tables (per class and per SNR) and figures under `results/`.
-- Code, config, SLURM scripts, fine-tuned checkpoint.
-- Final presentation (PPT/PDF) summarizing the README.
-- Team registration (names, emails) and the GitHub repository URL.
+
+- This README as the project report (choices, methods, metrics, results, run instructions)
+- Result tables and figures under [`results/`](results/)
+- Source code, configuration, and SLURM scripts under [`src/`](src/) and [`slurm/`](slurm/)
+- Fine-tuned checkpoint: [`models/yolov8_finetuned.pt`](models/yolov8_finetuned.pt)
+- Final presentation: [`slides/`](slides/)
