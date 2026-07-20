@@ -30,9 +30,12 @@ dataset:
   # least this many GT instances (bounded by its availability in val2017).
   # Fixes high-variance per-class AP for rare classes (e.g. microwave n=7).
   val_min_class_instances: 20
-  train_subset_size: 4500             # train2017 subset for fine-tuning (real GT);
-                                      # the mixture spreads it over 10 variants, so
-                                      # each cell still gets ~450 images
+  train_subset_size: 9000             # train2017 subset for fine-tuning (real GT).
+                                      # The v3 mixture spreads it over clean + 9
+                                      # raw + 9 restored domains, so each cell
+                                      # still gets ~375 raw + ~375 restored images.
+                                      # Selection is prefix-stable: growing the
+                                      # size only ADDS images (same shuffled order).
   val_subset_file: data/splits/val_subset.json
   train_subset_file: data/splits/train_subset.json
 
@@ -51,6 +54,19 @@ tasks:
 orb:
   nfeatures: 800
   distance_threshold: 64
+
+# Matched classical enhancement (Phase 3).
+enhancement:
+  # bm3d = non-blind BM3D fed the logged per-image noise sigma from
+  #        snr_index.csv (v3; +4-5 dB PSNR over NLM at every severity).
+  # nlm  = sigma-adaptive Non-Local Means (v2, kept for comparison — it hurt
+  #        keypoints/segmentation at every severity; see docs/archive/).
+  gauss_method: bm3d
+  # BM3D is memory-bandwidth-bound: ~2-4 core-minutes/image, and per-worker
+  # throughput drops as workers saturate the node's memory channels — use the
+  # 128-core/8-channel rxn nodes for the full set. Capped to the SLURM
+  # allocation at runtime.
+  workers: 128
 
 # Three corruptions chosen in the main README. Three severities each.
 distortions:
@@ -90,9 +106,22 @@ segmentation:
 
 finetune:
   # fine-tune YOLOv8 on corrupted train2017 with real COCO GT (converted to YOLO
-  # labels). Training data is a per-image seeded MIXTURE of clean + all
-  # distortion cells — single-corruption training measurably negative-transfers
-  # to every other cell (it hurt all motion-blur and low-severity cells).
+  # labels). Training data is a per-image seeded MIXTURE — single-corruption
+  # training measurably negative-transfers to every other cell (it hurt all
+  # motion-blur and low-severity cells).
+  #
+  # v3 mixture: clean with p=clean_fraction, else one of the 9 distortion
+  # cells uniformly; a distorted pick is then passed through the matched
+  # classical restorer with p=restored_fraction. Fixes the two v2 failures:
+  #  - clean_fraction 0.25 (v2: 1/10) — v2's fine-tune cost 0.068 mAP on clean
+  #    images, which made it LOSE to the pretrained model on every
+  #    low-severity cell (near-clean inputs);
+  #  - restored_fraction 0.5 (v2: 0) — v2 never trained on restored images,
+  #    so enhance→finetuned scored BELOW enhance→pretrained on salt & pepper
+  #    at every severity (domain mismatch on the exact inputs the deployment
+  #    decision matrix feeds the model).
+  clean_fraction: 0.25
+  restored_fraction: 0.5
   epochs: 30
   batch_size: 16
   imgsz: 640

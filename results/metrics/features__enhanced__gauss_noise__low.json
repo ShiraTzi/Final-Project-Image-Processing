@@ -2,7 +2,7 @@
   "task": "features",
   "variant": "enhanced__gauss_noise__low",
   "method": "ORB",
-  "match_ratio": 0.8001,
+  "match_ratio": 0.8472,
   "n_images": 1521,
   "n_skipped_no_clean_features": 0,
   "nfeatures": 800,

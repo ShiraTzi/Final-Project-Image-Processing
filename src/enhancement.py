@@ -1,13 +1,20 @@
 """Classical enhancement / restoration, one matched method per distortion.
 
-  - gauss_noise  -> sigma-adaptive Non-Local Means   (strength follows the
-                    estimated noise level, so mild noise is not over-smoothed
-                    and heavy noise is actually removed)
+  - gauss_noise  -> non-blind BM3D with the logged per-image sigma (v3).
+                    v2 used sigma-adaptive NLM and it is kept selectable
+                    (enhancement.gauss_method: nlm) — it measured 4-5 dB worse
+                    PSNR than BM3D and *hurt* keypoints/segmentation at every
+                    severity: its output keeps MORE high-frequency energy than
+                    the clean image (blotchy residual noise) while flattening
+                    the true texture those tasks depend on.
   - salt_pepper  -> median filter                    (the classic impulse-noise remover)
   - motion_blur  -> non-blind Wiener deconvolution   (the benchmark logs the exact
                     blur kernel per image at distortion time, so restoration can
                     invert the known degradation; a blind guess of the kernel
                     angle is measurably WORSE than doing nothing)
+
+Both non-blind restorers read their degradation parameters (noise variance /
+blur kernel) from results/metrics/snr_index.csv, logged at distortion time.
 
 All functions take and return an RGB uint8 array.
 
@@ -57,6 +64,25 @@ def restore_noise(img_rgb: np.ndarray) -> np.ndarray:
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     den = cv2.fastNlMeansDenoisingColored(bgr, None, h, h, 7, 21)
     return cv2.cvtColor(den, cv2.COLOR_BGR2RGB)
+
+
+def restore_noise_bm3d(img_rgb: np.ndarray, sigma: float = None) -> np.ndarray:
+    """Gaussian-noise restoration: BM3D with the *true* logged sigma (non-blind).
+
+    Same principle as the Wiener deblur: the benchmark logs each image's
+    sampled noise variance in snr_index.csv, so restoration can match the
+    actual degradation instead of estimating it (Immerkaer under-estimates
+    sigma by up to ~17 under heavy clipped noise).  BM3D's collaborative
+    filtering of matched patch stacks separates noise from repeating texture
+    far better than pixelwise NLM: +4-5 dB PSNR at every severity on this
+    benchmark, with near-unity high-frequency retention at low severity.
+    Falls back to the Immerkaer estimate if no sigma was logged."""
+    import bm3d as _bm3d  # local import: heavy, and absent from the detectron2 venv
+
+    if sigma is None or not np.isfinite(sigma) or sigma <= 0:
+        sigma = estimate_noise_sigma(img_rgb)
+    den = _bm3d.bm3d_rgb(img_rgb.astype(np.float64) / 255.0, float(sigma) / 255.0)
+    return np.clip(den * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,10 +153,14 @@ def _load_distortion_params(cfg: Dict) -> Dict:
 
 def _enhance_one(job) -> str:
     """Worker: restore one image and save it (module-level for multiprocessing)."""
-    src, dst, dtype, ksize, angle = job
+    src, dst, dtype, ksize, angle, var, gauss_method = job
     dist = np.array(Image.open(src).convert("RGB"))
     if dtype == "gauss_noise":
-        enh = restore_noise(dist)
+        if gauss_method == "nlm":                      # v2 method, kept for comparison
+            enh = restore_noise(dist)
+        else:
+            sigma = float(np.sqrt(float(var))) if var not in (None, "") else None
+            enh = restore_noise_bm3d(dist, sigma)
     elif dtype == "salt_pepper":
         enh = restore_saltpepper(dist)
     elif dtype == "motion_blur":
@@ -143,12 +173,17 @@ def _enhance_one(job) -> str:
 
 
 def build_enhanced_sets(cfg: Dict, workers: int = 8) -> None:
+    import os
     from concurrent.futures import ProcessPoolExecutor
     from pycocotools.coco import COCO
+
+    # respect the SLURM allocation, not the node's core count
+    workers = max(1, min(workers, len(os.sched_getaffinity(0))))
 
     ds = cfg["dataset"]
     dist_root = Path(cfg["paths"]["distorted_root"])
     enh_root = Path(cfg["paths"]["enhanced_root"])
+    gauss_method = cfg.get("enhancement", {}).get("gauss_method", "bm3d")
     coco = COCO(ds["ann_instances_val"])
     img_ids = load_subset_ids(ds["val_subset_file"])
     id2name = {im["id"]: im["file_name"] for im in coco.loadImgs(img_ids)}
@@ -167,10 +202,11 @@ def build_enhanced_sets(cfg: Dict, workers: int = 8) -> None:
                     continue
                 row = params.get((image_id, dtype, severity), {})
                 jobs.append((str(resolve_image_path(in_dir, fname)), str(dst),
-                             dtype, row.get("ksize"), row.get("angle")))
+                             dtype, row.get("ksize"), row.get("angle"),
+                             row.get("var"), gauss_method))
 
     if jobs:
-        # per-image independent work; NLM at h~30 costs ~1s/image, so fan out
+        # per-image independent work; BM3D costs ~11s/image single-core, so fan out
         with ProcessPoolExecutor(max_workers=workers) as ex:
             for _ in tqdm(ex.map(_enhance_one, jobs, chunksize=16),
                           total=len(jobs), desc="enhance", leave=False):
@@ -182,11 +218,13 @@ def build_enhanced_sets(cfg: Dict, workers: int = 8) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=None,
+                    help="default: enhancement.workers from the config (else 8)")
     args = ap.parse_args()
     cfg = load_config(args.config)
     ensure_dirs(cfg)
-    build_enhanced_sets(cfg, workers=args.workers)
+    workers = args.workers or int(cfg.get("enhancement", {}).get("workers", 8))
+    build_enhanced_sets(cfg, workers=workers)
 
 
 if __name__ == "__main__":

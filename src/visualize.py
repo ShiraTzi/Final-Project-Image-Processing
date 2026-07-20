@@ -238,8 +238,10 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
     print(f"[viz] {out}")
 
 
-def plot_image_grids(cfg: Dict, n: int = 4) -> None:
-    """clean / distorted / enhanced grid for the first n subset images per distortion."""
+def plot_image_grids(cfg: Dict, n: int = 4,
+                     exclude_ids: "set | None" = None) -> None:
+    """clean / distorted / enhanced grid for n subset images per distortion.
+    Pass exclude_ids to avoid showing images already used in annotation grids."""
     from pycocotools.coco import COCO
     from src.data import load_subset_ids
 
@@ -248,7 +250,9 @@ def plot_image_grids(cfg: Dict, n: int = 4) -> None:
         print("[viz] no val subset yet; skipping image grids")
         return
     coco = COCO(ds["ann_instances_val"])
-    ids = load_subset_ids(ds["val_subset_file"])[:n]
+    _excl = exclude_ids or set()
+    all_ids = load_subset_ids(ds["val_subset_file"])
+    ids = [i for i in all_ids if i not in _excl][:n]
     names = [coco.loadImgs(i)[0]["file_name"] for i in ids]
     figdir = _figdir(cfg)
 
@@ -365,6 +369,334 @@ def plot_annotated_grids(cfg: Dict, n: int = 3, score_thr: float = 0.35) -> None
         fig.savefig(out, dpi=110)
         plt.close(fig)
         print(f"[viz] {out}")
+    return ids
+
+
+def plot_keypoint_grids(cfg: Dict, n: int = 2, score_thr: float = 0.35) -> None:
+    """Keypoint R-CNN predictions drawn on the images ("image with annotation"
+    for the keypoints task): skeleton + joint dots for each detected person,
+    clean / distorted (high severity) / enhanced, one figure per distortion.
+    Drawn from the existing prediction JSONs — no model inference needed."""
+    import matplotlib.patches as mpatches
+    from src.data import get_coco, load_subset_ids
+
+    # COCO 17-keypoint skeleton (0-indexed pairs)
+    SKELETON = [
+        (0, 1), (0, 2), (1, 3), (2, 4),          # head
+        (5, 6),                                    # shoulders
+        (5, 7), (7, 9), (6, 8), (8, 10),          # arms
+        (5, 11), (6, 12), (11, 12),                # torso
+        (11, 13), (13, 15), (12, 14), (14, 16),   # legs
+    ]
+    KP_COLOR  = "#f5c518"
+    LIMB_COLOR = "#e8e8e8"
+
+    ds = cfg["dataset"]
+    if not Path(ds["val_subset_file"]).exists():
+        print("[viz] no val subset yet; skipping keypoint grids")
+        return
+    coco_kp = get_coco(ds["ann_keypoints_val"])
+    preds_dir = Path(cfg["paths"]["preds_dir"])
+    figdir = _figdir(cfg)
+
+    # pick images with at least 2 persons with visible keypoints — richer scenes
+    ids_all = load_subset_ids(ds["val_subset_file"])
+    ids = [i for i in ids_all
+           if sum(1 for a in coco_kp.loadAnns(
+               coco_kp.getAnnIds(imgIds=i, iscrowd=False))
+               if a.get("num_keypoints", 0) >= 5) >= 2][:n]
+    if not ids:
+        print("[viz] no suitable person images for keypoint grids; skipping")
+        return
+
+    def _load_kp_preds(tag):
+        p = preds_dir / f"keypoints__{tag}.json"
+        if not p.exists():
+            return None
+        by_img: Dict[int, list] = {}
+        with open(p) as f:
+            for d in json.load(f):
+                if d.get("score", 0) >= score_thr:
+                    by_img.setdefault(d["image_id"], []).append(d)
+        return by_img
+
+    def _draw_kps(ax, img_path, preds, gt_anns, color):
+        ax.imshow(Image.open(img_path).convert("RGB"))
+        for a in gt_anns:                              # GT skeleton: gray dashed
+            kp = a["keypoints"]
+            for i, j in SKELETON:
+                xi, yi, vi = kp[3*i], kp[3*i+1], kp[3*i+2]
+                xj, yj, vj = kp[3*j], kp[3*j+1], kp[3*j+2]
+                if vi > 0 and vj > 0:
+                    ax.plot([xi, xj], [yi, yj], color=INK_MUTED,
+                            lw=1.0, ls="--", zorder=1)
+        for pred in preds or []:                       # predictions: skeleton + dots
+            kp = pred["keypoints"]
+            for i, j in SKELETON:
+                xi, yi, vi = kp[3*i], kp[3*i+1], kp[3*i+2]
+                xj, yj, vj = kp[3*j], kp[3*j+1], kp[3*j+2]
+                if vi > 0 and vj > 0:
+                    ax.plot([xi, xj], [yi, yj], color=LIMB_COLOR,
+                            lw=1.4, zorder=2)
+            for k in range(17):
+                x, y, v = kp[3*k], kp[3*k+1], kp[3*k+2]
+                if v > 0:
+                    ax.plot(x, y, "o", color=KP_COLOR, ms=4, zorder=3)
+        ax.axis("off")
+
+    clean_preds = _load_kp_preds("clean")
+    coco_inst = get_coco(ds["ann_instances_val"])
+    for dist, spec in cfg["distortions"].items():
+        sev = list(spec["severities"])[-1]
+        cols = [
+            ("clean",     "clean",     None,  f"Clean + Keypoint R-CNN"),
+            ("distorted", "distorted", dist,  f"Distorted ({dist}/{sev})"),
+            ("enhanced",  "enhanced",  dist,  "Enhanced"),
+        ]
+        preds_by_col = {}
+        for variant, _, d, _ in cols:
+            tag = "clean" if variant == "clean" else variant_tag(variant, dist, sev)
+            preds_by_col[variant] = (clean_preds if variant == "clean"
+                                     else _load_kp_preds(tag))
+        if preds_by_col["distorted"] is None:
+            continue
+        fig, axes = plt.subplots(len(ids), len(cols),
+                                 figsize=(4.5 * len(cols), 3.4 * len(ids)))
+        axes = axes[None, :] if len(ids) == 1 else axes
+        for row, image_id in enumerate(ids):
+            im = coco_kp.loadImgs(image_id)[0]
+            gt = coco_kp.loadAnns(coco_kp.getAnnIds(imgIds=image_id, iscrowd=False))
+            for col, (variant, img_variant, d, title) in enumerate(cols):
+                img_dir = variant_image_dir(
+                    cfg, img_variant,
+                    d, sev if d else None)
+                path = resolve_image_path(img_dir, im["file_name"])
+                preds = (preds_by_col[variant] or {}).get(image_id, [])
+                _draw_kps(axes[row, col], path, preds, gt, VARIANT_STYLE[
+                    "distorted" if variant == "clean" else variant]["color"])
+                if row == 0:
+                    axes[row, col].set_title(title, fontsize=10, color=INK)
+        fig.suptitle(
+            f"Keypoints on {dist}/{sev} — gray dashed = GT skeleton, "
+            f"white lines + yellow dots = predictions (score ≥ {score_thr})",
+            fontsize=11)
+        out = figdir / f"keypoints_{dist}.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=110)
+        plt.close(fig)
+        print(f"[viz] {out}")
+    return ids
+
+
+def plot_orb_match_grids(cfg: Dict, n: int = 2, max_draw: int = 60) -> None:
+    """ORB matching visualized ("image with annotation" for the features task):
+    clean-image keypoints matched against the distorted and the enhanced
+    variant, lines = good matches (same matcher/threshold as the metric), one
+    figure per distortion at its highest severity.  The per-pair caption is
+    the actual metric for that image: good matches / clean keypoints."""
+    import cv2
+    from src.data import get_coco, load_subset_ids
+
+    ds = cfg["dataset"]
+    if not Path(ds["val_subset_file"]).exists():
+        print("[viz] no val subset yet; skipping ORB match grids")
+        return
+    coco = get_coco(ds["ann_instances_val"])
+    # same image-selection rule as the annotated detection grids, so the
+    # qualitative figures show the same scenes across tasks
+    ids = [i for i in load_subset_ids(ds["val_subset_file"])
+           if 3 <= len(coco.getAnnIds(imgIds=i, iscrowd=False)) <= 12][:n]
+    names = [coco.loadImgs(i)[0]["file_name"] for i in ids]
+    figdir = _figdir(cfg)
+
+    nfeatures = int(cfg["orb"]["nfeatures"])
+    dist_thr = int(cfg["orb"]["distance_threshold"])
+    orb = cv2.ORB_create(nfeatures=nfeatures)
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    clean_dir = variant_image_dir(cfg, "clean")
+
+    def _hex_bgr(h):
+        return tuple(int(h[i:i + 2], 16) for i in (5, 3, 1))
+
+    def _match_pair(clean_path, var_path, color_hex):
+        """Side-by-side clean|variant image with good-match lines drawn."""
+        img1 = cv2.imread(str(clean_path), cv2.IMREAD_GRAYSCALE)
+        img2 = cv2.imread(str(var_path), cv2.IMREAD_GRAYSCALE)
+        kp1, d1 = orb.detectAndCompute(img1, None)
+        kp2, d2 = orb.detectAndCompute(img2, None)
+        good = []
+        if d1 is not None and d2 is not None:
+            good = sorted((m for m in matcher.match(d1, d2)
+                           if m.distance <= dist_thr), key=lambda m: m.distance)
+        vis = cv2.drawMatches(
+            cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR), kp1,
+            cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR), kp2,
+            good[:max_draw], None, matchColor=_hex_bgr(color_hex),
+            singlePointColor=(190, 190, 190),
+            flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        return cv2.cvtColor(vis, cv2.COLOR_BGR2RGB), len(good), len(kp1)
+
+    for dist, spec in cfg["distortions"].items():
+        sev = list(spec["severities"])[-1]                   # highest severity
+        cols = [("distorted", f"Clean ↔ Distorted ({dist}/{sev})",
+                 VARIANT_STYLE["distorted"]["color"]),
+                ("enhanced", "Clean ↔ Enhanced",
+                 VARIANT_STYLE["enhanced"]["color"])]
+        if not variant_image_dir(cfg, "distorted", dist, sev).is_dir():
+            continue
+        fig, axes = plt.subplots(len(names), len(cols),
+                                 figsize=(7.4 * len(cols), 2.9 * len(names)))
+        axes = axes[None, :] if len(names) == 1 else axes
+        for row, fname in enumerate(names):
+            for col, (variant, title, color) in enumerate(cols):
+                var_dir = variant_image_dir(cfg, variant, dist, sev)
+                vis, n_good, n_kp = _match_pair(
+                    clean_dir / fname, resolve_image_path(var_dir, fname), color)
+                ax = axes[row, col]
+                ax.imshow(vis)
+                ax.set_xlabel(f"{n_good} / {n_kp} clean keypoints matched "
+                              f"(ratio {n_good / max(n_kp, 1):.2f})",
+                              fontsize=9, color=INK)
+                ax.set_xticks([]), ax.set_yticks([])
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
+                if row == 0:
+                    ax.set_title(title, fontsize=11, color=INK)
+        fig.suptitle(f"ORB feature matching under {dist}/{sev} — lines = good "
+                     f"matches (Hamming ≤ {dist_thr}, cross-checked, "
+                     f"best {max_draw} drawn)", fontsize=11)
+        out = figdir / f"orb_matches_{dist}.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=110)
+        plt.close(fig)
+        print(f"[viz] {out}")
+    return ids
+
+
+def plot_panoptic_grids(cfg: Dict, n: int = 2, alpha: float = 0.55) -> None:
+    """Panoptic predictions drawn on the images: GT segments / clean pred /
+    distorted pred / enhanced pred, one figure per distortion at its highest
+    severity.  Colors are keyed by *category* (same class = same color in
+    every panel, golden-ratio hue spacing); white lines = segment boundaries.
+    Pure drawing from the saved panoptic PNGs + segments_info — no model."""
+    import colorsys
+
+    import cv2
+    from src.data import get_coco, load_subset_ids
+
+    ds = cfg["dataset"]
+    metrics_dir = Path(cfg["paths"]["metrics_dir"])
+    preds_dir = Path(cfg["paths"]["preds_dir"])
+    gt_json = metrics_dir / "panoptic_gt_subset.json"
+    gt_dir = Path(ds["panoptic_val_dir"])
+    if not (Path(ds["val_subset_file"]).exists() and gt_json.exists()
+            and gt_dir.is_dir()):
+        print("[viz] panoptic GT/preds missing; skipping panoptic grids")
+        return
+
+    coco = get_coco(ds["ann_instances_val"])
+    ids = [i for i in load_subset_ids(ds["val_subset_file"])
+           if 3 <= len(coco.getAnnIds(imgIds=i, iscrowd=False)) <= 12][:n]
+    figdir = _figdir(cfg)
+
+    def _cat_color(cat_id: int):
+        hue = (cat_id * 0.61803398875) % 1.0            # golden-ratio spacing
+        return np.array(colorsys.hsv_to_rgb(hue, 0.62, 0.92))
+
+    def _segments_by_image(json_path: Path):
+        with open(json_path) as f:
+            data = json.load(f)
+        anns = data["annotations"] if isinstance(data, dict) else data
+        return {a["image_id"]: a["segments_info"] for a in anns}
+
+    def _overlay(ax, base_img_path: Path, mask_png: Path, segs: list, title=None):
+        base = np.asarray(Image.open(base_img_path).convert("RGB"),
+                          dtype=np.float64) / 255.0
+        if mask_png.exists() and segs is not None:
+            m = np.asarray(Image.open(mask_png).convert("RGB"), dtype=np.uint32)
+            seg_id = m[..., 0] + 256 * m[..., 1] + 65536 * m[..., 2]
+            if seg_id.shape != base.shape[:2]:       # enhanced/distorted PNGs match, GT is same size
+                seg_id = cv2.resize(seg_id.astype(np.int32), base.shape[1::-1],
+                                    interpolation=cv2.INTER_NEAREST).astype(np.uint32)
+            painted = np.zeros_like(base)
+            covered = np.zeros(seg_id.shape, dtype=bool)
+            for s in segs:
+                region = seg_id == s["id"]
+                painted[region] = _cat_color(s["category_id"])
+                covered |= region
+            out = base.copy()
+            out[covered] = (1 - alpha) * base[covered] + alpha * painted[covered]
+            # white hairline boundaries between segments
+            edges = (cv2.morphologyEx(seg_id.astype(np.float32), cv2.MORPH_GRADIENT,
+                                      np.ones((3, 3), np.float32)) > 0) & covered
+            out[edges] = 1.0
+            ax.imshow(out)
+        else:
+            ax.imshow(base)
+        ax.axis("off")
+        if title:
+            ax.set_title(title, fontsize=10, color=INK)
+
+    gt_segs = _segments_by_image(gt_json)
+
+    def _pq(tag):
+        p = metrics_dir / f"segmentation__{tag}.json"
+        if p.exists():
+            with open(p) as f:
+                return json.load(f).get("PQ")
+        return None
+
+    for dist, spec in cfg["distortions"].items():
+        sev = list(spec["severities"])[-1]                   # highest severity
+        tags = {"clean": "clean",
+                "distorted": variant_tag("distorted", dist, sev),
+                "enhanced": variant_tag("enhanced", dist, sev)}
+        pred_segs = {}
+        for v, tag in tags.items():
+            j = preds_dir / f"segmentation__{tag}.json"
+            if not j.exists():
+                pred_segs = None
+                break
+            pred_segs[v] = _segments_by_image(j)
+        if pred_segs is None:
+            continue
+
+        def _fmt_pq(tag):
+            v = _pq(tag)
+            return f" — PQ {v:.3f}" if v is not None else ""
+
+        cols = [("gt", "clean", "Ground truth"),
+                ("clean", "clean", f"Clean{_fmt_pq('clean')}"),
+                ("distorted", "distorted",
+                 f"Distorted ({dist}/{sev}){_fmt_pq(tags['distorted'])}"),
+                ("enhanced", "enhanced", f"Enhanced{_fmt_pq(tags['enhanced'])}")]
+        fig, axes = plt.subplots(len(ids), len(cols),
+                                 figsize=(4.0 * len(cols), 3.1 * len(ids)))
+        axes = axes[None, :] if len(ids) == 1 else axes
+        for row, image_id in enumerate(ids):
+            im = coco.loadImgs(image_id)[0]
+            stem = Path(im["file_name"]).stem
+            for col, (source, img_variant, title) in enumerate(cols):
+                img_dir = variant_image_dir(
+                    cfg, img_variant, dist if img_variant != "clean" else None,
+                    sev if img_variant != "clean" else None)
+                base = resolve_image_path(img_dir, im["file_name"])
+                if source == "gt":
+                    mask, segs = gt_dir / f"{stem}.png", gt_segs.get(image_id)
+                else:
+                    mask = preds_dir / f"segmentation__{tags[source]}" / f"{stem}.png"
+                    segs = pred_segs[source].get(image_id)
+                _overlay(axes[row, col], base, mask, segs,
+                         title if row == 0 else None)
+        fig.suptitle(f"Panoptic segmentation on {dist}/{sev} — color = category "
+                     "(consistent across panels), white = segment boundaries",
+                     fontsize=11)
+        out = figdir / f"panoptic_{dist}.png"
+        fig.tight_layout()
+        fig.savefig(out, dpi=110)
+        plt.close(fig)
+        print(f"[viz] {out}")
+    return ids
 
 
 def main() -> None:
@@ -376,8 +708,14 @@ def main() -> None:
     plot_recovery_bars(cfg)
     plot_per_class_ap(cfg)
     plot_per_class_comparison(cfg)
-    plot_image_grids(cfg)
-    plot_annotated_grids(cfg)
+    # Run annotation grids first so we know which images they used,
+    # then give the raw grid a disjoint set of images.
+    ann_ids  = plot_annotated_grids(cfg) or []
+    kp_ids   = plot_keypoint_grids(cfg) or []
+    orb_ids  = plot_orb_match_grids(cfg) or []
+    pan_ids  = plot_panoptic_grids(cfg) or []
+    used_ids = set(ann_ids) | set(kp_ids) | set(orb_ids) | set(pan_ids)
+    plot_image_grids(cfg, exclude_ids=used_ids)
 
 
 if __name__ == "__main__":

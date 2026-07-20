@@ -51,7 +51,8 @@ def stage_distort(cfg, force):
 
 def stage_enhance(cfg, force):
     from src.enhancement import build_enhanced_sets
-    build_enhanced_sets(cfg)   # internally skips existing images
+    workers = int(cfg.get("enhancement", {}).get("workers", 8))
+    build_enhanced_sets(cfg, workers=workers)   # internally skips existing images
 
 
 def _variants(cfg):
@@ -111,6 +112,7 @@ def stage_report(cfg, force):
     from src.visualize import (
         plot_acc_vs_snr, plot_recovery_bars, plot_per_class_ap,
         plot_per_class_comparison, plot_image_grids, plot_annotated_grids,
+        plot_orb_match_grids, plot_panoptic_grids, plot_keypoint_grids,
     )
     build_tables(cfg)
     plot_acc_vs_snr(cfg)
@@ -119,6 +121,9 @@ def stage_report(cfg, force):
     plot_per_class_comparison(cfg)
     plot_image_grids(cfg)
     plot_annotated_grids(cfg)
+    plot_keypoint_grids(cfg)
+    plot_orb_match_grids(cfg)
+    plot_panoptic_grids(cfg)
 
 
 STAGES = {
