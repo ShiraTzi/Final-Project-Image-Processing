@@ -30,6 +30,7 @@ yolo_work/
 runs/
 /yolo*.pt
 slurm/logs/
+docs/reference_pipeline_from_slides.md
 
 # VSCode
 .vscode/

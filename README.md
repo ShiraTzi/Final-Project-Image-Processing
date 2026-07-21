@@ -339,7 +339,7 @@ Enhancement recovers very different fractions of the damage depending on corrupt
 
 - **Salt-and-pepper** is the most recoverable: the median filter restores 80–91% of the detection loss and 74–88% of the segmentation loss at high severity. Each corrupted pixel is an isolated outlier surrounded by uncorrupted neighbors, so the median can discard it exactly and replace it with a true local value. Almost no information is permanently lost.
 - **Gaussian noise** reaches 67–74% recovery on detection with non-blind BM3D. Additive white noise spreads energy uniformly across all frequencies; a strong denoiser can suppress most of it, but the lowest-amplitude signal components (fine texture, small edges) are irreversibly masked even at the best denoising strength. Hence recovery is strong but not complete.
-- **Motion blur** achieves only 25–45% recovery even with the optimal Wiener filter given the exact kernel. Blur zeroes entire frequency bands — any spatial frequency oriented along the blur direction is completely destroyed. No linear filter can recover energy that was set to zero; what Wiener does is suppress amplified noise in the bands that remain. This is a hard information-theoretic ceiling, and it explains why the stack (enhancement + fine-tuning) is the only competitive strategy for heavy motion blur.
+- **Motion blur** achieves only 25–45% recovery at high severity with matched Wiener deconvolution. A linear motion kernel strongly attenuates some frequencies and has zeros at others, so stable linear inversion cannot restore those components; Wiener deconvolution instead balances partial inversion against amplification of residual errors. This helps explain why stacking enhancement with fine-tuning gives the best detection result for heavy motion blur: Wiener recovers the components that can be restored reliably, while the nonlinear detector can use learned semantic priors and the remaining image context to infer task-relevant structure. It does not reconstruct the truly missing frequencies or violate the information limit, but it can recover detection performance without exactly recovering the original image.
 
 The ordering — salt-and-pepper ≫ Gaussian ≫ motion blur — reflects how permanently each corruption destroys image information, not how severe it looks by eye or by SNR.
 
@@ -351,7 +351,7 @@ The same corruption at the same SNR damages different tasks to very different de
 - **Salt-and-pepper** hits all tasks roughly equally in absolute degradation terms, but the median filter rescues them equally well too — making it the corruption with the smallest *net* impact after enhancement.
 - **Gaussian noise** is most damaging to ORB (−0.38 at high) relative to what enhancement recovers (+0.04), because even after BM3D removes the noise the enhanced image still differs from the clean one in fine texture — and ORB penalises that difference by construction. The GT-scored tasks (detection, keypoints, segmentation) recover much better (+0.17, +0.11, +0.09 at high severity) because a smoothed image can still contain the semantic structure needed to localise objects and joints.
 
-The practical implication: if you want to predict which corruption will most harm your pipeline, ask what information your metric depends on. Spatial frequency content (edges, texture) → motion blur is the worst. Pixel-level fidelity to the original → noise corruptions dominate.
+The practical implication is that corruption sensitivity depends on the information required by the task. Methods that rely on sharp edges, local geometry, or precise spatial localization are especially vulnerable to motion blur. Methods or metrics that depend on accurate pixel values and fine texture can instead be strongly affected by Gaussian and salt-and-pepper noise. SNR alone is therefore insufficient; the relevant question is whether the task depends primarily on geometric structure, radiometric fidelity, or semantic context.
 
 ### Fine-tuning becomes more useful as corruption severity increases
 
@@ -526,7 +526,6 @@ python -m src.visualize                 # all figures
 │   ├── metrics/             # Per-cell metrics and comparison tables
 │   └── figures/             # Generated plots and visual examples
 ├── docs/
-│   ├── reference_pipeline_from_slides.md
 │   └── archive/             # Previous experiments and failure analyses
 ├── slides/
 │   └── slide_script.md
