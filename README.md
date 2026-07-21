@@ -1,6 +1,6 @@
 # Final Project Report — Image Processing and Computer Vision
 
-**Team Members:**  
+**Team Members:** 
 Ohad Shpizhizen (oshpizhizen@nvidia.com)  
 Shira Tziony (shira.tziony@gmail.com)  
 **GitHub Repository:** [Final-Project-Image-Processing](https://github.com/ShiraTzi/Final-Project-Image-Processing)
