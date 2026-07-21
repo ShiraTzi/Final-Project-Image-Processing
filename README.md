@@ -244,11 +244,29 @@ Each panel corresponds to one task (detection, features, keypoints, segmentation
 
 ---
 
-### Plot 2 — Per-Class AP Under Gaussian Noise, High Severity
+### Per-Class Detection AP — Clean and High-Severity Corruptions
 
-![per-class AP comparison](results/figures/per_class_ap_gauss_noise_high.png)
+**Clean baseline**
 
-AP per COCO object class for the `gauss_noise / high` distortion cell (SNR ~10 dB). Gray bars show the clean detection baseline, blue bars the distorted AP, green bars the AP after BM3D enhancement, and amber bars the AP of the fine-tuned YOLOv8n detector. Classes are sorted by their clean AP (descending). The n= label below each class name shows the number of GT instances in the 1,521-image subset.
+![per-class AP clean](results/figures/per_class_ap_clean.png)
+
+The clean-baseline figure shows AP for all 80 COCO object classes, sorted from highest to lowest. The dashed horizontal line marks the overall mAP and establishes the per-class reference for the corruption comparisons below.
+
+**High-severity corruptions**
+
+**Gaussian noise**
+
+![per-class AP under Gaussian noise](results/figures/per_class_ap_gauss_noise_high.png)
+
+**Salt-and-pepper noise**
+
+![per-class AP under salt-and-pepper noise](results/figures/per_class_ap_salt_pepper_high.png)
+
+**Motion blur**
+
+![per-class AP under motion blur](results/figures/per_class_ap_motion_blur_high.png)
+
+Each figure compares the 15 COCO classes with the highest clean AP at high corruption severity. Gray bars show the clean detection baseline, blue bars the distorted AP, green bars the AP after matched classical enhancement, and amber bars the AP of the fine-tuned YOLOv8n detector. Classes are sorted by clean AP; the `n=` label gives the number of non-crowd ground-truth instances in the 1,521-image subset.
 
 ---
 
@@ -260,14 +278,6 @@ AP per COCO object class for the `gauss_noise / high` distortion cell (SNR ~10 d
 ![segmentation vs SNR](results/figures/acc_vs_snr_segmentation.png)
 
 One figure per task; within each figure, one panel per distortion type (Gaussian noise, salt-and-pepper, motion blur), with a shared y-axis. The x-axis is the measured per-image SNR (dB) of each severity level; lower SNR corresponds to higher severity. Series: distorted (blue, solid ●), enhanced (green, dashed ■), fine-tuned (amber, dotted ▲; detection only), and the clean baseline (gray dashed line). Each severity step is a single point on the x-axis because all images within a severity share the same distribution of sampled degradation parameters.
-
----
-
-### Plot 4 — Per-Class AP of Clean Detection Baseline
-
-![per-class AP clean](results/figures/per_class_ap_clean.png)
-
-AP per COCO object class for the clean (undistorted) YOLOv8n evaluation on the 1,521-image subset. Classes are sorted by AP (descending). The n= annotation below each class name shows the GT instance count. The dashed horizontal line marks the mean AP across all classes. This establishes the per-class starting point from which all degradation and recovery deltas are measured.
 
 ---
 

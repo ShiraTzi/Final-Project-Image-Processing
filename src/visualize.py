@@ -177,27 +177,17 @@ def plot_per_class_ap(cfg: Dict) -> None:
     print(f"[viz] {out}")
 
 
-def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
-    """Grouped per-class AP bars: clean vs distorted vs enhanced vs finetuned,
-    on the fine-tune distortion/severity (worst-case cell)."""
-    ft = cfg.get("finetune", {})
-    dtype, sev = ft.get("distortion"), ft.get("severity")
-    if not dtype:
-        return
+def plot_per_class_comparison(cfg: Dict, top_n: int = 15,
+                              severity: str = "high") -> None:
+    """Grouped per-class AP bars for every distortion at one severity."""
     mdir = Path(cfg["paths"]["metrics_dir"])
-    variants = {
-        v: mdir / f"detection__{variant_tag(v, dtype, sev)}.json"
-        for v in ("clean", "distorted", "enhanced", "finetuned")
-    }
-    per_class = {}
-    for name, p in variants.items():
-        if p.exists():
-            with open(p) as f:
-                per_class[name] = json.load(f).get("per_class_ap") or {}
-    if "clean" not in per_class or len(per_class) < 2:
+    clean_path = mdir / "detection__clean.json"
+    if not clean_path.exists():
         return
+    with open(clean_path) as f:
+        clean_ap = json.load(f).get("per_class_ap") or {}
 
-    top = sorted(((v, k) for k, v in per_class["clean"].items() if not np.isnan(v)),
+    top = sorted(((v, k) for k, v in clean_ap.items() if not np.isnan(v)),
                  reverse=True)[:top_n]
     names = [k for _, k in top]
 
@@ -211,31 +201,47 @@ def plot_per_class_comparison(cfg: Dict, top_n: int = 15) -> None:
                                                             iscrowd=False))
                    if a["image_id"] in subset_ids) for n in names}
     tick_labels = [f"{n}\n(n={gt_n[n]})" for n in names]
-    x = np.arange(len(names))
-    group_w = 0.8
-    width = group_w / len(per_class)
     bar_colors = {"clean": INK_MUTED,
                   **{v: st["color"] for v, st in VARIANT_STYLE.items()}}
-    plt.figure(figsize=(14, 5))
-    for i, (variant, pcl) in enumerate(per_class.items()):
-        vals = [pcl.get(n, np.nan) for n in names]
-        plt.bar(x + i * width, vals, width, label=variant, color=bar_colors[variant])
-        for xi, v in zip(x + i * width, vals):
-            if v == 0:   # measured zero, not missing data — make it visible
-                plt.text(xi, 0.004, "0", ha="center", va="bottom",
-                         fontsize=6, color=INK)
-    plt.xticks(x + (group_w - width) / 2, tick_labels, rotation=45, ha="right",
-               fontsize=8)
-    plt.ylabel("AP@[.5:.95]")
-    plt.title(f"Per-class AP — clean vs {dtype}/{sev} (distorted / enhanced / fine-tuned)")
-    plt.legend()
-    plt.gca().set_axisbelow(True)
-    plt.grid(True, axis="y", alpha=0.3)
-    out = _figdir(cfg) / f"per_class_ap_{dtype}_{sev}.png"
-    plt.tight_layout()
-    plt.savefig(out, dpi=120)
-    plt.close()
-    print(f"[viz] {out}")
+
+    for dtype in cfg.get("distortions", {}):
+        variants = {"clean": clean_ap}
+        for variant in ("distorted", "enhanced", "finetuned"):
+            path = mdir / f"detection__{variant_tag(variant, dtype, severity)}.json"
+            if path.exists():
+                with open(path) as f:
+                    variants[variant] = json.load(f).get("per_class_ap") or {}
+        if len(variants) < 2:
+            continue
+
+        x = np.arange(len(names))
+        group_w = 0.8
+        width = group_w / len(variants)
+        plt.figure(figsize=(14, 5))
+        for i, (variant, pcl) in enumerate(variants.items()):
+            vals = [pcl.get(n, np.nan) for n in names]
+            positions = x + i * width
+            plt.bar(positions, vals, width, label=variant,
+                    color=bar_colors[variant])
+            for xi, value in zip(positions, vals):
+                if value == 0:  # measured zero, not missing data
+                    plt.text(xi, 0.004, "0", ha="center", va="bottom",
+                             fontsize=6, color=INK)
+        plt.xticks(x + (group_w - width) / 2, tick_labels,
+                   rotation=45, ha="right", fontsize=8)
+        plt.ylabel("AP@[.5:.95]")
+        plt.title(
+            f"Per-class AP — clean vs {dtype}/{severity} "
+            "(distorted / enhanced / fine-tuned)"
+        )
+        plt.legend()
+        plt.gca().set_axisbelow(True)
+        plt.grid(True, axis="y", alpha=0.3)
+        out = _figdir(cfg) / f"per_class_ap_{dtype}_{severity}.png"
+        plt.tight_layout()
+        plt.savefig(out, dpi=120)
+        plt.close()
+        print(f"[viz] {out}")
 
 
 def plot_image_grids(cfg: Dict, n: int = 4,
