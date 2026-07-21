@@ -11,7 +11,6 @@ Shira Tziony (shira.tziony@gmail.com)
 
 ![Recovery across all tasks, distortions, and severity levels](results/figures/recovery_bars.png)
 
-Across **36 task × distortion × severity cells**, matched classical enhancement improves every distorted baseline. For object detection, enhancement is the best standalone repair in all nine cells; combining enhancement with fine-tuning produces the highest score for medium and high motion blur. The remainder of this report explains the experimental design, metrics, visual evidence, and limitations behind these results.
 
 ---
 
