@@ -510,7 +510,6 @@ python -m src.visualize                 # all figures
 │   └── visualize.py         # Plots and annotated examples
 ├── scripts/
 │   ├── run_pipeline.py      # Resumable pipeline orchestrator
-│   ├── build_slides.py      # Presentation generator
 │   └── readme_table.py      # README result-table generator
 ├── slurm/
 │   └── *.sbatch             # Cluster jobs for preparation, inference, and training
