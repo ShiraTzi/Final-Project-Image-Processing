@@ -9,7 +9,7 @@ Shira Tziony (shira.tziony@gmail.com)
 
 ## Results at a Glance
 
-![Recovery across all tasks, distortions, and severity levels](results/figures/recovery_bars.png)
+![Recovery summary and representative outputs from all four tasks](results/figures/readme_results_teaser.png)
 
 
 ---
