@@ -39,18 +39,9 @@ The experimental workflow follows a five-phase structure:
 | 4 — Fine-tuning       | Fine-tune YOLOv8n on a mixture of clean/distorted/restored data | `src.finetune_det` |
 | 5 — Reporting         | Aggregate and visualize results, create tables/plots        | `src.tables`, `src.visualize` |
 
-Pipeline schematic:
-```
-Evaluation:
-COCO images ──► inference ──► evaluation
-COCO images ──► distortion ──► inference ──► evaluation
-COCO images ──► distortion ──► enhancement ──► inference ──► evaluation
+![Experimental design pipeline](results/figures/experimental_design_pipeline.png)
 
-Fine-tuning:
-Training mixture ──► fine-tune YOLOv8 ──► inference ──► evaluation
-
-All evaluations ──► tables and figures
-```
+The fixed evaluation subset is processed as clean, distorted, and enhanced variants before inference with all four methods. A separate train2017 subset is used to fine-tune YOLOv8n, which is then evaluated on the same detection cells.
 
 ---
 
