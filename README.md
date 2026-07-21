@@ -7,6 +7,14 @@ Shira Tziony (shira.tziony@gmail.com)
 
 ---
 
+## Results at a Glance
+
+![Recovery across all tasks, distortions, and severity levels](results/figures/recovery_bars.png)
+
+Across **36 task × distortion × severity cells**, matched classical enhancement improves every distorted baseline. For object detection, enhancement is the best standalone repair in all nine cells; combining enhancement with fine-tuning produces the highest score for medium and high motion blur. The remainder of this report explains the experimental design, metrics, visual evidence, and limitations behind these results.
+
+---
+
 ## Overview
 
 This project systematically benchmarks the robustness of modern image-processing and computer vision algorithms to realistic image corruptions, using the COCO dataset. We:
@@ -50,14 +58,14 @@ All evaluations ──► tables and figures
 
 ### What is COCO?
 
-**COCO (Common Objects in Context)** is a large-scale computer-vision benchmark introduced by Lin et al. It contains approximately 330,000 images, of which more than 200,000 are labeled, and covers 80 object categories. Its task-specific annotations include object bounding boxes, instance segmentation masks, 17-keypoint skeletons for people, and panoptic segmentation labels.
+**COCO (Common Objects in Context)** is a large-scale computer-vision benchmark [introduced by Lin et al.](https://arxiv.org/abs/1405.0312). It contains approximately 330,000 images, of which more than 200,000 are labeled, and covers 80 object categories. Its task-specific annotations include object bounding boxes, instance segmentation masks, 17-keypoint skeletons for people, and panoptic segmentation labels.
 
 We use the **val2017** split (5,000 images) as our evaluation pool. It has public ground-truth annotations and is widely used for reporting benchmark results, allowing us to compare our clean baselines with published model scores.
 
 ### Why COCO?
 
 - **Multiple tasks on the same image set.** Detection, person-keypoint, and panoptic annotations can be evaluated on one fixed image subset without cross-dataset alignment. ORB feature matching does not use COCO ground truth; it uses each clean image as its reference.
-- **Standardized evaluation tools.** The official COCO API computes detection AP and keypoint OKS AP, while the official Panoptic API computes PQ. This makes our evaluation reproducible and uses the same metric definitions as published COCO results. Because we evaluate on a custom 1,521-image subset, absolute scores are not directly comparable with results reported on the full val2017 split.
+- **Standardized evaluation tools.** The official [COCO API](https://github.com/cocodataset/cocoapi) computes detection AP and keypoint OKS AP, while the official [Panoptic API](https://github.com/cocodataset/panopticapi) computes PQ. This makes our evaluation reproducible and uses the same metric definitions as published COCO results. Because we evaluate on a custom 1,521-image subset, absolute scores are not directly comparable with results reported on the full val2017 split.
 - **All three learned models are COCO-pretrained.** YOLOv8n, Keypoint R-CNN, and Panoptic FPN ship with weights trained on COCO train2017. Their clean baselines can therefore be used as an approximate sanity check against published full-val2017 scores, rather than as an exact comparison.
 - **Class diversity.** 80 categories across people, animals, vehicles, household objects, and outdoor scenes ensure our per-class degradation analysis is meaningful and not dominated by a single domain.
 
@@ -85,10 +93,10 @@ Four tasks covering both low-level signal analysis and high-level scene understa
 
 | Task | Level | Model / Algorithm | Library | Metric |
 |---|---|---|---|---|
-| Feature matching | **Low-level** | ORB + BFMatcher (Hamming, cross-check) | OpenCV | Match ratio vs clean |
-| Object detection | **High-level** | YOLOv8n (COCO-pretrained) | ultralytics | mAP@[.5:.95] |
-| Keypoint detection | **High-level** | Keypoint R-CNN ResNet50-FPN (COCO-pretrained) | torchvision | OKS AP |
-| Panoptic segmentation | **High-level** | Panoptic FPN R50 (COCO-pretrained) | detectron2 | PQ = SQ × RQ |
+| Feature matching | **Low-level** | [ORB](https://doi.org/10.1109/ICCV.2011.6126544) + [BFMatcher](https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html) (Hamming, cross-check) | [OpenCV](https://opencv.org/) | Match ratio vs clean |
+| Object detection | **High-level** | [YOLOv8n](https://docs.ultralytics.com/models/yolov8/) (COCO-pretrained) | [Ultralytics](https://docs.ultralytics.com/) | [COCO mAP](https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py)@[.5:.95] |
+| Keypoint detection | **High-level** | [Keypoint R-CNN ResNet50-FPN](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.detection.keypointrcnn_resnet50_fpn.html) (COCO-pretrained) | [torchvision](https://pytorch.org/vision/stable/) | [OKS AP](https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py) |
+| Panoptic segmentation | **High-level** | [Panoptic FPN R50](https://github.com/facebookresearch/detectron2/blob/main/MODEL_ZOO.md#coco-panoptic-segmentation-baselines-with-panoptic-fpn) (COCO-pretrained) | [detectron2](https://github.com/facebookresearch/detectron2) | [PQ = SQ × RQ](https://github.com/cocodataset/panopticapi) |
 
 All metrics are in the range [0, 1]; higher is better.
 
@@ -130,9 +138,9 @@ For every image variant, `results/metrics/snr_index.csv` records the measured SN
 
 | Distortion | What it models | How it is applied | Enhancement method |
 |---|---|---|---|
-| **Gaussian noise** | Sensor / intensity noise | Additive white Gaussian noise; variance sampled and recorded per image | Non-blind **BM3D** using sigma derived from the recorded variance |
-| **Salt-and-pepper** | Impulsive pixel corruption | Random pixel locations set to 0 or 255; configured amount recorded | **Median filter** (3×3) |
-| **Motion blur** | Global camera-motion blur | Whole-image convolution with a linear kernel; size and angle recorded | Non-blind **Wiener deconvolution** with the reconstructed kernel |
+| [**Gaussian noise**](https://en.wikipedia.org/wiki/Gaussian_noise) | Sensor / intensity noise | Additive white Gaussian noise; variance sampled and recorded per image | Non-blind [**BM3D**](https://doi.org/10.1109/TIP.2007.901238) using sigma derived from the recorded variance |
+| [**Salt-and-pepper**](https://en.wikipedia.org/wiki/Salt-and-pepper_noise) | Impulsive pixel corruption | Random pixel locations set to 0 or 255; configured amount recorded | [**Median filter**](https://docs.opencv.org/4.x/d4/d86/group__imgproc__filter.html) (3×3) |
+| [**Motion blur**](https://en.wikipedia.org/wiki/Motion_blur) | Global camera-motion blur | Whole-image convolution with a linear kernel; size and angle recorded | Non-blind [**Wiener deconvolution**](https://scikit-image.org/docs/stable/api/skimage.restoration.html#skimage.restoration.wiener) with the reconstructed kernel |
 
 ### Gaussian Noise
 
